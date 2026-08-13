@@ -51,7 +51,7 @@ func Load() (*Tracer, error) {
 	tracer := &Tracer{}
 	if err := loadOomtracerObjects(&tracer.objs, nil); err != nil {
 		if memlockErr != nil {
-			return nil, fmt.Errorf("loading oom tracer: %w (memlock limit was not raised: %v)",
+			return nil, fmt.Errorf("loading oom tracer: %w (memlock limit was not raised: %w)",
 				verifierDetail(err), memlockErr)
 		}
 		return nil, fmt.Errorf("loading oom tracer: %w", verifierDetail(err))
@@ -113,6 +113,10 @@ func (t *Tracer) Close() error {
 func verifierDetail(err error) error {
 	var verr *ebpf.VerifierError
 	if errors.As(err, &verr) {
+		// %+v is the only verb that prints the whole log. VerifierError.Error,
+		// which is what %w and %v use, deliberately summarises it, and the
+		// summary drops the very instruction the verifier rejected.
+		//nolint:errorlint // Wrapping here would discard the log this function exists to surface.
 		return fmt.Errorf("%+v", verr)
 	}
 	return err
