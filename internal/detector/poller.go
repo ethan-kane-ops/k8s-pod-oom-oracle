@@ -168,7 +168,7 @@ func (p *Poller) Prime() error {
 		if err != nil {
 			continue
 		}
-		p.counters[path] = stats.Events.OOMKill
+		p.counters[path] = stats.OOMKills()
 	}
 	p.refreshSnapshotsLocked(paths)
 
@@ -217,7 +217,7 @@ func (p *Poller) detectLocked(paths []string) []KillEvent {
 			continue
 		}
 
-		current := stats.Events.OOMKill
+		current := stats.OOMKills()
 		previous, seen := p.counters[path]
 		p.counters[path] = current
 
@@ -292,17 +292,22 @@ func (p *Poller) inferVictimLocked(path string) Victim {
 }
 
 // refreshSnapshotsLocked records the current process list for each cgroup.
+//
+// /proc is walked once for every cgroup at once. Scanning per cgroup would
+// repeat the walk hundreds of times per pass on a busy node.
 func (p *Poller) refreshSnapshotsLocked(paths []string) {
 	if p.proc == nil {
 		return
 	}
 
+	grouped, err := p.proc.ProcessesByCgroup()
+	if err != nil {
+		p.log.Debug("snapshotting processes", "error", err)
+		return
+	}
+
 	for _, path := range paths {
-		procs, err := p.proc.ProcessesInCgroup(path)
-		if err != nil {
-			p.log.Debug("snapshotting processes", "cgroup", path, "error", err)
-			continue
-		}
+		procs := grouped[path]
 		byPID := make(map[int]procfs.Process, len(procs))
 		for _, proc := range procs {
 			byPID[proc.PID] = proc

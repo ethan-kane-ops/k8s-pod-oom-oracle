@@ -1,0 +1,200 @@
+// Package api serves reports and health over HTTP.
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/render"
+	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/store"
+)
+
+// Timeouts guard against slow or stuck clients holding daemon resources.
+const (
+	readHeaderTimeout = 5 * time.Second
+	writeTimeout      = 30 * time.Second
+	shutdownTimeout   = 10 * time.Second
+)
+
+// Options configures a Server.
+type Options struct {
+	// Addr is the listen address, such as ":9090".
+	Addr string
+	// Store supplies reports. Required.
+	Store store.Store
+	// Ready reports whether the daemon is serving. Optional; nil means always.
+	Ready func() bool
+	// Logger receives request errors.
+	Logger *slog.Logger
+}
+
+// Server exposes the daemon's reports over HTTP.
+type Server struct {
+	store store.Store
+	ready func() bool
+	log   *slog.Logger
+	http  *http.Server
+}
+
+// New builds a Server.
+func New(opts Options) (*Server, error) {
+	if opts.Store == nil {
+		return nil, errors.New("api requires a store")
+	}
+	if opts.Logger == nil {
+		opts.Logger = slog.New(slog.DiscardHandler)
+	}
+	if opts.Ready == nil {
+		opts.Ready = func() bool { return true }
+	}
+
+	s := &Server{store: opts.Store, ready: opts.Ready, log: opts.Logger}
+	s.http = &http.Server{
+		Addr:              opts.Addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+	}
+
+	return s, nil
+}
+
+// Handler builds the route table. Exported so tests can exercise the routes
+// with httptest rather than binding a port.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("GET /v1/events", s.handleListEvents)
+	mux.HandleFunc("GET /v1/events/{id}", s.handleGetEvent)
+	return mux
+}
+
+// ListenAndServe runs the server until the context is cancelled, then shuts
+// down gracefully.
+func (s *Server) ListenAndServe(ctx context.Context) error {
+	errs := make(chan error, 1)
+	go func() {
+		if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errs <- fmt.Errorf("serving http: %w", err)
+			return
+		}
+		errs <- nil
+	}()
+
+	select {
+	case err := <-errs:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer cancel()
+		if err := s.http.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutting down http server: %w", err)
+		}
+		return nil
+	}
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	s.writeText(w, http.StatusOK, "ok\n")
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
+	if !s.ready() {
+		s.writeText(w, http.StatusServiceUnavailable, "not ready\n")
+		return
+	}
+	s.writeText(w, http.StatusOK, "ready\n")
+}
+
+func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	filter := store.Filter{
+		Namespace: query.Get("namespace"),
+		Pod:       query.Get("pod"),
+		Container: query.Get("container"),
+	}
+	if raw := query.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 0 {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid limit %q", raw))
+			return
+		}
+		filter.Limit = limit
+	}
+
+	reports, err := s.store.List(r.Context(), filter)
+	if err != nil {
+		s.log.Error("listing reports", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "listing reports")
+		return
+	}
+
+	payload, err := render.JSONList(reports)
+	if err != nil {
+		s.log.Error("rendering reports", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "rendering reports")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) handleGetEvent(w http.ResponseWriter, r *http.Request) {
+	report, err := s.store.Get(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "report not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("getting report", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "getting report")
+		return
+	}
+
+	payload, err := render.JSON(&report)
+	if err != nil {
+		s.log.Error("rendering report", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "rendering report")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) writeJSON(w http.ResponseWriter, status int, payload []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	// Reports carry values read from the node's filesystem (cgroup paths,
+	// process command lines). Declaring the type and forbidding sniffing stops
+	// a browser ever interpreting that as markup.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	// gosec flags this as a taint sink. The payload is JSON this package
+	// marshalled itself, served with an explicit type and nosniff, so it can
+	// never be interpreted as markup.
+	if _, err := w.Write(payload); err != nil { //nolint:gosec // G705: JSON we produced, typed and nosniff
+		s.log.Debug("writing response", "error", err)
+	}
+}
+
+func (s *Server) writeText(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(status)
+	if _, err := w.Write([]byte(body)); err != nil {
+		s.log.Debug("writing response", "error", err)
+	}
+}
+
+func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
+	payload, err := json.Marshal(map[string]string{"error": message})
+	if err != nil {
+		s.writeText(w, http.StatusInternalServerError, "internal error\n")
+		return
+	}
+	s.writeJSON(w, status, append(payload, '\n'))
+}
