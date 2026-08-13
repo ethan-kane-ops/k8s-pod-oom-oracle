@@ -60,10 +60,15 @@ linters:
       disabled-checks:
         - whyNoLint
       settings:
+        # sampler.Sample is roughly 190 bytes of plain numbers and is passed by
+        # value on purpose: it is an immutable reading copied into a ring buffer
+        # once per second per cgroup, so the copy is not worth the aliasing risk
+        # that pointers would introduce. Hot loops that iterate samples index
+        # explicitly rather than ranging by value.
         hugeParam:
-          # Small immutable value structs stay value receivers; 80 bytes is a
-          # handful of strings and copying them is cheaper than the indirection.
-          sizeThreshold: 128
+          sizeThreshold: 256
+        rangeValCopy:
+          sizeThreshold: 256
 
     nolintlint:
       require-explanation: true
