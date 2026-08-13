@@ -54,6 +54,15 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.12.2
+      # The eBPF detector and its !linux fallback are mutually exclusive build
+      # tags, so a single-platform run always leaves one of them uncompiled and
+      # therefore unlinted. The pass above covers linux; this one covers the
+      # fallback.
+      - uses: golangci/golangci-lint-action@v8
+        env:
+          GOOS: darwin
+        with:
+          version: v2.12.2
 
   test:
     name: test

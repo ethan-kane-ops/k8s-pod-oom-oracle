@@ -114,10 +114,17 @@ e2e-logs:
     kubectl --context kind-{{e2e_cluster}} -n {{e2e_ns}} logs \
       -l app.kubernetes.io/name=oom-oracle --tail=200
 
-# Run linters
+# Run linters against both target platforms.
+#
+# Linting only the host's GOOS is how an errorlint failure in tracer_linux.go
+# reached main: the eBPF detector sits behind "linux && (amd64 || arm64)", so a
+# run on macOS never compiles it, and a run on CI never compiles the
+# !linux fallback beside it. Neither pass alone covers this package.
 lint:
-    go vet ./...
-    golangci-lint run
+    GOOS=linux go vet ./...
+    GOOS=darwin go vet ./...
+    GOOS=linux golangci-lint run
+    GOOS=darwin golangci-lint run
 
 # Tidy go modules
 tidy:
