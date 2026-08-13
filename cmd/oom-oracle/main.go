@@ -1,20 +1,17 @@
+// Command oom-oracle is the CLI and node daemon for process-aware Kubernetes
+// OOM diagnostics.
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
+	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/cmd"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "k8s-pod-oom-oracle",
-	Short: "Kubernetes system daemon and CLI for low-level process-aware OOM diagnostics using cgroups and eBPF tracing",
-}
-
 func main() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if err := cmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
