@@ -108,7 +108,7 @@ Because OOM Oracle relies on eBPF to attach to host kernel events, the daemon mu
 
 ### Prerequisites
 
-* Go 1.22+
+* Go 1.26+ (pinned in `.mise.toml`)
 * Linux Kernel $\ge$ 5.8 (with BTF enabled for eBPF tracing)
 * [mise](https://mise.jdx.dev/) (Runtime manager)
 * [just](https://just.systems/) (Task executor)
