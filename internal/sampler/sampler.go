@@ -19,6 +19,13 @@ import (
 const (
 	DefaultInterval    = time.Second
 	DefaultHistorySize = 60
+	// DefaultRetention is how long a vanished cgroup's history is kept.
+	//
+	// A container's cgroup disappears the instant it dies, which is exactly when
+	// its trajectory becomes interesting. Evicting on the first pass that misses
+	// it destroys the history before the detector's event has been handled, so
+	// the post-mortem arrives with no trajectory at all.
+	DefaultRetention = 30 * time.Second
 )
 
 // Options configures a Sampler.
@@ -32,6 +39,8 @@ type Options struct {
 	Interval time.Duration
 	// HistorySize is how many samples each cgroup retains.
 	HistorySize int
+	// Retention is how long history survives after a cgroup disappears.
+	Retention time.Duration
 	// Now supplies the current time. Tests inject a deterministic clock.
 	Now func() time.Time
 	// Logger receives per-cgroup read failures, which are expected churn.
@@ -44,11 +53,15 @@ type Sampler struct {
 	prefix      string
 	interval    time.Duration
 	historySize int
+	retention   time.Duration
 	now         func() time.Time
 	log         *slog.Logger
 
 	mu    sync.RWMutex
 	rings map[string]*Ring
+	// vanishedAt records when a cgroup stopped being discovered, so its history
+	// can outlive it for long enough to be reported on.
+	vanishedAt map[string]time.Time
 }
 
 // New builds a Sampler, applying defaults for unset options.
@@ -62,6 +75,9 @@ func New(opts Options) (*Sampler, error) {
 	if opts.HistorySize <= 0 {
 		opts.HistorySize = DefaultHistorySize
 	}
+	if opts.Retention <= 0 {
+		opts.Retention = DefaultRetention
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -74,9 +90,11 @@ func New(opts Options) (*Sampler, error) {
 		prefix:      opts.Prefix,
 		interval:    opts.Interval,
 		historySize: opts.HistorySize,
+		retention:   opts.Retention,
 		now:         opts.Now,
 		log:         opts.Logger,
 		rings:       make(map[string]*Ring),
+		vanishedAt:  make(map[string]time.Time),
 	}, nil
 }
 
@@ -137,7 +155,7 @@ func (s *Sampler) Collect() error {
 		s.record(path, Sample{Time: now, Stats: stats, PSI: psi})
 	}
 
-	s.evict(live)
+	s.evict(live, now)
 	return nil
 }
 
@@ -155,15 +173,33 @@ func (s *Sampler) record(path string, sample Sample) {
 	ring.Add(sample)
 }
 
-// evict drops history for cgroups that no longer exist, so a churning node does
-// not grow the map without bound.
-func (s *Sampler) evict(live map[string]struct{}) {
+// evict drops history for cgroups that have been gone longer than the retention
+// window, so a churning node does not grow the map without bound.
+//
+// Eviction is deliberately delayed. A container's cgroup vanishes the moment it
+// dies, which is precisely when its trajectory matters, so dropping it on the
+// first missed pass would race the detector and leave every post-mortem without
+// a memory history.
+func (s *Sampler) evict(live map[string]struct{}, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for path := range s.rings {
-		if _, ok := live[path]; !ok {
+		if _, ok := live[path]; ok {
+			// Still present: clear any pending eviction, since a cgroup can
+			// briefly disappear from a walk and come back.
+			delete(s.vanishedAt, path)
+			continue
+		}
+
+		firstMissed, seen := s.vanishedAt[path]
+		if !seen {
+			s.vanishedAt[path] = now
+			continue
+		}
+		if now.Sub(firstMissed) >= s.retention {
 			delete(s.rings, path)
+			delete(s.vanishedAt, path)
 		}
 	}
 }

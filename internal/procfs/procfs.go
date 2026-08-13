@@ -2,7 +2,6 @@ package procfs
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -113,8 +112,14 @@ func (f *FS) namespaceInode(dir string) uint64 {
 
 // Processes lists every process currently visible in the tree, sorted by PID.
 //
-// Processes that exit mid-scan are skipped. On a node in the middle of an OOM
-// kill that is the common case, not an edge case.
+// A process that cannot be read is skipped, whatever the reason. On a live node
+// that is the normal case, not an edge case: processes exit between listing the
+// directory and reading their status, and a daemon reading the host's /proc
+// meets processes it has no permission to inspect. Aborting the scan on the
+// first such process would intermittently return nothing at all, which silently
+// breaks victim inference rather than degrading it.
+//
+// Only a failure to list the proc root itself is an error.
 func (f *FS) Processes() ([]Process, error) {
 	pids, err := f.PIDs()
 	if err != nil {
@@ -125,14 +130,47 @@ func (f *FS) Processes() ([]Process, error) {
 	for _, pid := range pids {
 		proc, err := f.Process(pid)
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, err
+			continue
 		}
 		procs = append(procs, proc)
 	}
 	return procs, nil
+}
+
+// ProcessesByCgroup groups every readable process by its cgroup path, each
+// group sorted by descending RSS.
+//
+// Callers watching many cgroups must use this rather than calling
+// ProcessesInCgroup per cgroup: /proc is walked once here, instead of once per
+// cgroup, which on a busy node is the difference between one scan and hundreds
+// per polling pass.
+func (f *FS) ProcessesByCgroup() (map[string][]Process, error) {
+	all, err := f.Processes()
+	if err != nil {
+		return nil, err
+	}
+
+	grouped := make(map[string][]Process)
+	for _, proc := range all {
+		if proc.CgroupPath == "" {
+			continue
+		}
+		grouped[proc.CgroupPath] = append(grouped[proc.CgroupPath], proc)
+	}
+	for path := range grouped {
+		sortByMemory(grouped[path])
+	}
+	return grouped, nil
+}
+
+// sortByMemory orders processes heaviest first, PID ascending as a tie-break.
+func sortByMemory(procs []Process) {
+	slices.SortFunc(procs, func(a, b Process) int {
+		if c := cmp.Compare(b.RSSBytes, a.RSSBytes); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.PID, b.PID)
+	})
 }
 
 // PIDs lists the numeric entries of the tree, sorted ascending.
@@ -173,13 +211,7 @@ func (f *FS) ProcessesInCgroup(cgroupPath string) ([]Process, error) {
 			matched = append(matched, proc)
 		}
 	}
-	slices.SortFunc(matched, func(a, b Process) int {
-		// Descending by memory, then ascending by PID for a stable order.
-		if c := cmp.Compare(b.RSSBytes, a.RSSBytes); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.PID, b.PID)
-	})
+	sortByMemory(matched)
 
 	return matched, nil
 }

@@ -157,7 +157,7 @@ func TestCollectEvictsVanishedCgroups(t *testing.T) {
 	fixture := tree()
 	addContainer(fixture, containerA, "1024", "max")
 	addContainer(fixture, containerB, "2048", "max")
-	s, _ := newSampler(t, fixture, Options{Prefix: "/kubepods.slice"})
+	s, c := newSampler(t, fixture, Options{Prefix: "/kubepods.slice"})
 
 	if err := s.Collect(); err != nil {
 		t.Fatalf("first Collect() error = %v", err)
@@ -170,6 +170,17 @@ func TestCollectEvictsVanishedCgroups(t *testing.T) {
 	removeContainer(fixture, containerB)
 	if err := s.Collect(); err != nil {
 		t.Fatalf("second Collect() error = %v", err)
+	}
+
+	// History survives the retention window so a post-mortem can still read it.
+	if _, ok := s.History(containerB); !ok {
+		t.Fatal("History() dropped the container immediately; its trajectory is the report")
+	}
+
+	// Past the retention window it is finally dropped.
+	c.Advance(2 * DefaultRetention)
+	if err := s.Collect(); err != nil {
+		t.Fatalf("third Collect() error = %v", err)
 	}
 
 	if got, want := s.Tracked(), []string{containerA}; !reflect.DeepEqual(got, want) {

@@ -240,3 +240,58 @@ func TestParseNamespaceInode(t *testing.T) {
 		})
 	}
 }
+
+// TestParseCgroupNormalisesNamespaceRelativePaths covers a daemon running in
+// its own cgroup namespace. The kernel writes the path relative to the reading
+// process's namespace root, so paths outside it arrive with leading "..".
+// Left alone they never match the absolute paths from walking /sys/fs/cgroup,
+// and correlation silently produces nothing.
+func TestParseCgroupNormalisesNamespaceRelativePaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "observed from inside a container without hostCgroupns",
+			input: "0::/../../system.slice/docker.service\n",
+			want:  "/system.slice/docker.service",
+		},
+		{
+			name:  "single level up",
+			input: "0::/../kubepods.slice/kubepods-pod123.slice/cri-containerd-abc.scope\n",
+			want:  "/kubepods.slice/kubepods-pod123.slice/cri-containerd-abc.scope",
+		},
+		{
+			name:  "already absolute is unchanged",
+			input: "0::/kubepods.slice/kubepods-pod123.slice/cri-containerd-abc.scope\n",
+			want:  "/kubepods.slice/kubepods-pod123.slice/cri-containerd-abc.scope",
+		},
+		{
+			name:  "legacy hierarchy is normalised too",
+			input: "9:memory:/../../kubepods/burstable/pod-abc/container\n",
+			want:  "/kubepods/burstable/pod-abc/container",
+		},
+		{
+			name:  "trailing slash removed",
+			input: "0::/kubepods.slice/\n",
+			want:  "/kubepods.slice",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseCgroup([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("ParseCgroup() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ParseCgroup(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -160,12 +161,29 @@ func ParseCgroup(data []byte) (string, error) {
 	}
 
 	if unified != "" {
-		return unified, nil
+		return normaliseCgroupPath(unified), nil
 	}
 	if memory != "" {
-		return memory, nil
+		return normaliseCgroupPath(memory), nil
 	}
 	return "", fmt.Errorf("no unified or memory cgroup line found")
+}
+
+// normaliseCgroupPath resolves a namespace-relative cgroup path to an absolute
+// one.
+//
+// The kernel writes /proc/<pid>/cgroup relative to the *reading* process's
+// cgroup namespace root. A daemon in its own cgroup namespace therefore sees
+// paths like "/../../system.slice/docker.service" for processes outside it, and
+// those never match the absolute paths obtained by walking /sys/fs/cgroup. The
+// kernel emits exactly enough ".." to climb back to the real root, so cleaning
+// the path recovers the absolute form.
+//
+// The deployment should still set hostCgroupns (docker: --cgroupns=host) so
+// paths arrive absolute. This keeps a misconfigured one degraded rather than
+// silently correlating nothing.
+func normaliseCgroupPath(p string) string {
+	return path.Clean(p)
 }
 
 // ParseNamespaceInode extracts the inode from a namespace symlink target of the

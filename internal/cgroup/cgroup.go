@@ -109,8 +109,25 @@ type MemoryStats struct {
 	Anon   uint64 `json:"anon"`
 	File   uint64 `json:"file"`
 	Kernel uint64 `json:"kernel"`
-	// Events holds the memory.events counters.
+	// Events holds the memory.events counters. These are hierarchical: a kill in
+	// any descendant increments them here too.
 	Events MemoryEvents `json:"events"`
+	// EventsLocal holds memory.events.local, counting only events charged to
+	// this cgroup itself. Attribution must use these, or a kill in one container
+	// is reported against every ancestor cgroup as well.
+	EventsLocal MemoryEvents `json:"eventsLocal"`
+	// HasLocalEvents reports whether memory.events.local was available. It
+	// arrived in kernel 5.13; older kernels only expose hierarchical counters.
+	HasLocalEvents bool `json:"hasLocalEvents"`
+}
+
+// OOMKills reports the kill counter to attribute to this cgroup, preferring the
+// local counter so ancestors are not blamed for a descendant's kill.
+func (m MemoryStats) OOMKills() uint64 {
+	if m.HasLocalEvents {
+		return m.EventsLocal.OOMKill
+	}
+	return m.Events.OOMKill
 }
 
 // UsageRatio reports usage as a fraction of the limit, in [0,1]. An uncapped or
@@ -184,15 +201,31 @@ func (f *FS) readMemoryStatsV2(cgroupPath string) (MemoryStats, error) {
 	if err != nil {
 		return MemoryStats{}, err
 	}
-	stats.Events = MemoryEvents{
-		Low:     eventFields["low"],
-		High:    eventFields["high"],
-		Max:     eventFields["max"],
-		OOM:     eventFields["oom"],
-		OOMKill: eventFields["oom_kill"],
+	stats.Events = eventsFrom(eventFields)
+
+	// memory.events.local landed in 5.13. Where present it is the only correct
+	// basis for attribution, since memory.events aggregates descendants.
+	localFields, err := f.readKeyValueOptional(path.Join(dir, "memory.events.local"))
+	if err != nil {
+		return MemoryStats{}, err
+	}
+	if len(localFields) > 0 {
+		stats.EventsLocal = eventsFrom(localFields)
+		stats.HasLocalEvents = true
 	}
 
 	return stats, nil
+}
+
+// eventsFrom maps parsed key/value pairs onto the counter struct.
+func eventsFrom(fields map[string]uint64) MemoryEvents {
+	return MemoryEvents{
+		Low:     fields["low"],
+		High:    fields["high"],
+		Max:     fields["max"],
+		OOM:     fields["oom"],
+		OOMKill: fields["oom_kill"],
+	}
 }
 
 func (f *FS) readMemoryStatsV1(cgroupPath string) (MemoryStats, error) {
