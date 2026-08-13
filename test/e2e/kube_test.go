@@ -89,6 +89,9 @@ type status struct {
 	TrackedCgroups int     `json:"trackedCgroups"`
 	UptimeSeconds  float64 `json:"uptimeSeconds"`
 	Version        string  `json:"version"`
+	Node           string  `json:"node"`
+	PodCacheSynced bool    `json:"podCacheSynced"`
+	PodsTracked    int     `json:"podsTracked"`
 }
 
 // report mirrors the fields the suite asserts on. It is deliberately partial:
@@ -98,11 +101,15 @@ type report struct {
 	ID       string `json:"id"`
 	Source   string `json:"source"`
 	Identity struct {
-		PodUID      string `json:"podUID"`
-		ContainerID string `json:"containerID"`
-		QoS         string `json:"qos"`
-		CgroupPath  string `json:"cgroupPath"`
-		Resolved    bool   `json:"resolved"`
+		PodUID        string `json:"podUID"`
+		ContainerID   string `json:"containerID"`
+		QoS           string `json:"qos"`
+		CgroupPath    string `json:"cgroupPath"`
+		Resolved      bool   `json:"resolved"`
+		Namespace     string `json:"namespace"`
+		PodName       string `json:"podName"`
+		ContainerName string `json:"containerName"`
+		Image         string `json:"image"`
 	} `json:"identity"`
 	Victim struct {
 		PID      int      `json:"pid"`

@@ -45,6 +45,15 @@ type Status struct {
 	UptimeSeconds float64 `json:"uptimeSeconds"`
 	// Version is the build the daemon was compiled from.
 	Version string `json:"version"`
+	// Node is the node whose pods are being watched. Empty when cluster
+	// correlation is off or unavailable.
+	Node string `json:"node,omitempty"`
+	// PodCacheSynced reports whether the pod informer finished its initial
+	// list. Reports carry namespace and pod names only once it has; before
+	// that they identify pods by UID alone.
+	PodCacheSynced bool `json:"podCacheSynced"`
+	// PodsTracked is how many pods on this node the cache holds.
+	PodsTracked int `json:"podsTracked"`
 }
 
 // Options configures a Server.
