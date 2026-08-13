@@ -64,6 +64,8 @@ type Daemon struct {
 	processed atomic.Uint64
 	// skipped counts events discarded as non-Kubernetes.
 	skipped atomic.Uint64
+	// watching records that the detector attached successfully.
+	watching atomic.Bool
 }
 
 // New builds a Daemon.
@@ -103,6 +105,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("starting detector: %w", err)
 	}
+	d.watching.Store(true)
+	defer d.watching.Store(false)
 
 	samplerDone := make(chan error, 1)
 	go func() { samplerDone <- d.sampler.Run(ctx) }()
@@ -247,6 +251,23 @@ const unlimitedLimit uint64 = 1<<64 - 1
 func (d *Daemon) nextID(at time.Time) string {
 	return at.UTC().Format("20060102T150405Z") + "-" + strconv.FormatUint(d.sequence.Add(1), 10)
 }
+
+// Ready reports whether the daemon is actually watching this node.
+//
+// Both halves matter. The detector being attached means a kill will be seen;
+// the sampler holding at least one cgroup means the report will have a memory
+// trajectory rather than a bare kill notice. A readiness probe that passed
+// before both were true would let traffic and, more to the point, test
+// workloads start against a daemon that silently misses the first kill.
+func (d *Daemon) Ready() bool {
+	return d.watching.Load() && len(d.sampler.Tracked()) > 0
+}
+
+// Tracked reports how many cgroups the sampler is holding history for.
+func (d *Daemon) Tracked() int { return len(d.sampler.Tracked()) }
+
+// Detector names the detection method in use.
+func (d *Daemon) Detector() string { return string(d.detector.Source()) }
 
 // Processed reports how many reports have been stored.
 func (d *Daemon) Processed() uint64 { return d.processed.Load() }

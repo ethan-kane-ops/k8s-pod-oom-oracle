@@ -85,6 +85,13 @@ across kernel versions that moved the fields, including the 6.2 rewrite of
 `mm_struct.rss_stat`. It attaches to a kprobe rather than the `oom/mark_victim`
 tracepoint because that tracepoint's layout is not a stable ABI.
 
+**A known gap in the poller on Kubernetes.** It detects a kill by noticing a
+counter rise between two passes, which needs the cgroup to still exist on the
+second one. When a container is killed outright the kubelet tears its cgroup
+down within milliseconds, and the kill goes unseen. The eBPF detector has no
+such dependency: it observes the kill as the kernel makes it. Prefer eBPF on
+Kubernetes and treat the poller as the degraded mode it is.
+
 ---
 
 ## 💻 Visual Terminal Post-Mortem
@@ -173,6 +180,23 @@ just bpf-verify    # fails if the committed objects are stale (also runs in CI)
 This runs in Docker because Apple's clang has no BPF backend. Developing on a
 Mac otherwise works normally: the detector is unavailable there, the rest of
 the tool is not.
+
+### End-to-end tests
+
+The unit suite proves the parsers. The e2e suite proves the product: it deploys
+the daemon to a kind cluster, makes real pods exceed real limits, and asserts on
+the post-mortems the deployed daemon produced.
+
+```bash
+just e2e       # create the cluster, deploy, run the suite
+just e2e-logs  # the deployed daemon's logs, when a run fails
+just e2e-down  # tear the cluster down
+```
+
+Every bug that has mattered in this project was found this way rather than by a
+unit test, including two in this suite's first run: the agent silently losing
+all capabilities because the distroless base runs as non-root, and every pod on
+a kubelet with its own cgroup root being classified as `Unknown` QoS.
 
 ---
 

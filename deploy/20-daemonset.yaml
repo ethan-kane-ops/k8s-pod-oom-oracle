@@ -1,0 +1,100 @@
+# Node agent for oom-oracle.
+#
+# The privileges below are not incidental, and each one is the minimum for a
+# capability the tool would otherwise lose:
+#
+#   privileged        loading a BPF program and attaching a kprobe. Without it
+#                     the daemon still runs, falling back to the poller.
+#   hostPID           /proc must show the node's processes, not the pod's, or
+#                     there is no victim to identify and no survivors to list.
+#
+# A separate hazard has no field to set: /proc/<pid>/cgroup is written relative
+# to the *reading* process's cgroup namespace, and the CRI puts pods in a
+# private one under cgroup v2. A namespaced reader sees
+# "0::/../../system.slice/..." which matches nothing under /sys/fs/cgroup. The
+# daemon normalises those paths itself rather than depending on a namespace it
+# cannot request.
+#
+# Both host mounts are read-only: the daemon never writes to the node.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: oom-oracle
+  namespace: oom-oracle
+  labels:
+    app.kubernetes.io/name: oom-oracle
+    app.kubernetes.io/component: node-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oom-oracle
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oom-oracle
+        app.kubernetes.io/component: node-agent
+    spec:
+      serviceAccountName: oom-oracle
+      hostPID: true
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: oom-oracle
+          image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - daemon
+            - --detector=auto
+            - --cgroup-root=/host/sys/fs/cgroup
+            - --proc-root=/host/proc
+            - --listen=:9090
+            - --log-format=json
+          ports:
+            - name: http
+              containerPort: 9090
+          securityContext:
+            privileged: true
+            # privileged alone is not enough. The image's base runs as
+            # "nonroot", and a process that is not UID 0 starts with an empty
+            # effective capability set no matter how large its bounding set is,
+            # so bpf() returns EPERM and the daemon silently falls back to
+            # polling. This was found by the e2e suite, not by reading docs.
+            runAsUser: 0
+          volumeMounts:
+            - name: cgroup
+              mountPath: /host/sys/fs/cgroup
+              readOnly: true
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          # /readyz means the probe is attached and the sampler holds history,
+          # not merely that the process started. A pod that OOMs between start
+          # and attach would otherwise go unreported with nothing to show why.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory

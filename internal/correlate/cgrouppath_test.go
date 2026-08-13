@@ -9,6 +9,37 @@ const (
 	containerID  = "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
 )
 
+// TestParseCgroupPathKubeletCgroupRoot covers a kubelet run with a cgroup root
+// of its own, which is what kind does and what any cluster passing
+// --cgroup-root gets. systemd flattens the parent slice into each child's name,
+// so every segment gains a "kubelet-" prefix.
+func TestParseCgroupPathKubeletCgroupRoot(t *testing.T) {
+	t.Parallel()
+
+	const path = "/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/" +
+		"kubelet-kubepods-burstable-pod022353b0_bae5_4670_a5d8_c92a05e6f7ca.slice/" +
+		"cri-containerd-55ba2819dd45a03ed673c4a055d058ae33c15a6e0d80f045a471d6ee3b36eeb0.scope"
+
+	scope, ok := ParseCgroupPath(path)
+	if !ok {
+		t.Fatalf("ParseCgroupPath(%q) reported no Kubernetes container", path)
+	}
+	if want := "022353b0-bae5-4670-a5d8-c92a05e6f7ca"; scope.PodUID != want {
+		t.Errorf("PodUID = %q, want %q", scope.PodUID, want)
+	}
+	if want := "55ba2819dd45a03ed673c4a055d058ae33c15a6e0d80f045a471d6ee3b36eeb0"; scope.ContainerID != want {
+		t.Errorf("ContainerID = %q, want %q", scope.ContainerID, want)
+	}
+	// The bug this covers: the QoS segment is "kubelet-kubepods-burstable",
+	// not "kubepods-burstable", and matching on a prefix reported Unknown.
+	if scope.QoS != QoSBurstable {
+		t.Errorf("QoS = %q, want %q", scope.QoS, QoSBurstable)
+	}
+	if scope.Driver != DriverSystemd {
+		t.Errorf("Driver = %q, want %q", scope.Driver, DriverSystemd)
+	}
+}
+
 func TestParseCgroupPathKubernetesContainers(t *testing.T) {
 	t.Parallel()
 

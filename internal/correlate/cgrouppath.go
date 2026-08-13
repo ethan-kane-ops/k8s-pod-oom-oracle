@@ -195,7 +195,14 @@ func parseQoS(segments []string, driver Driver) QoSClass {
 		name := segment
 		if driver == DriverSystemd {
 			name = strings.TrimSuffix(name, ".slice")
-			name = strings.TrimPrefix(name, "kubepods-")
+			// A kubelet given its own cgroup root produces
+			// "kubelet-kubepods-burstable.slice", because systemd flattens the
+			// parent slice into every child's name. Anchoring on the last
+			// "kubepods-" discards any such prefix; requiring it at the front
+			// silently reported every pod on such a node as Unknown.
+			if start := strings.LastIndex(name, "kubepods-"); start >= 0 {
+				name = name[start+len("kubepods-"):]
+			}
 		}
 		switch strings.ToLower(name) {
 		case "burstable":

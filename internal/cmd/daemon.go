@@ -21,6 +21,7 @@ import (
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/procfs"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/sampler"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/store"
+	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/version"
 )
 
 // daemonConfig holds the daemon command's flags.
@@ -135,7 +136,14 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, cfg daemonConfig) error 
 		return fmt.Errorf("building daemon: %w", err)
 	}
 
-	server, err := api.New(api.Options{Addr: cfg.listenAddr, Store: reports, Logger: log})
+	started := time.Now()
+	server, err := api.New(api.Options{
+		Addr:   cfg.listenAddr,
+		Store:  reports,
+		Ready:  oracle.Ready,
+		Status: func() api.Status { return daemonStatus(oracle, cgroupFS, started) },
+		Logger: log,
+	})
 	if err != nil {
 		return fmt.Errorf("building api server: %w", err)
 	}
@@ -187,6 +195,20 @@ func buildDetector(
 	default:
 		return nil, fmt.Errorf("unknown detector %q: want %s, %s, or %s",
 			cfg.detectorName, detectorAuto, detectorPoller, detectorEBPF)
+	}
+}
+
+// daemonStatus snapshots the daemon for /v1/status.
+func daemonStatus(oracle *daemon.Daemon, cgroupFS *cgroup.FS, started time.Time) api.Status {
+	return api.Status{
+		Detector:       oracle.Detector(),
+		CgroupVersion:  cgroupFS.Version().String(),
+		Ready:          oracle.Ready(),
+		Reports:        oracle.Processed(),
+		Skipped:        oracle.Skipped(),
+		TrackedCgroups: oracle.Tracked(),
+		UptimeSeconds:  time.Since(started).Seconds(),
+		Version:        version.Get().Version,
 	}
 }
 
