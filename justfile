@@ -54,8 +54,9 @@ lint:
 tidy:
     go mod tidy
 
-# Tidy + lint + test
-check: tidy lint test
+# Tidy + lint + test. Uses the race detector so the local gate matches CI:
+# concurrency bugs in this codebase are the ones that fail on a node, not a laptop.
+check: tidy lint test-race
 
 # Remove build artifacts
 clean:
