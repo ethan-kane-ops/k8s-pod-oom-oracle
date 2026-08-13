@@ -22,6 +22,31 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
+// Status is the daemon's operational state, served at /v1/status.
+//
+// It answers the question a report cannot: which detector produced it. An
+// inferred victim from the poller and a traced one from eBPF are the same shape,
+// so anything asserting on behaviour, the e2e suite included, needs to be told
+// rather than left to guess.
+type Status struct {
+	// Detector is the active detection method: ebpf, poller, or fake.
+	Detector string `json:"detector"`
+	// CgroupVersion is the hierarchy layout in use.
+	CgroupVersion string `json:"cgroupVersion"`
+	// Ready mirrors /readyz.
+	Ready bool `json:"ready"`
+	// Reports counts post-mortems produced since start.
+	Reports uint64 `json:"reports"`
+	// Skipped counts kills discarded as belonging to no Kubernetes container.
+	Skipped uint64 `json:"skipped"`
+	// TrackedCgroups is how many containers currently have sampled history.
+	TrackedCgroups int `json:"trackedCgroups"`
+	// UptimeSeconds is how long the daemon has been running.
+	UptimeSeconds float64 `json:"uptimeSeconds"`
+	// Version is the build the daemon was compiled from.
+	Version string `json:"version"`
+}
+
 // Options configures a Server.
 type Options struct {
 	// Addr is the listen address, such as ":9090".
@@ -30,16 +55,19 @@ type Options struct {
 	Store store.Store
 	// Ready reports whether the daemon is serving. Optional; nil means always.
 	Ready func() bool
+	// Status supplies the operational snapshot. Optional; nil serves zeroes.
+	Status func() Status
 	// Logger receives request errors.
 	Logger *slog.Logger
 }
 
 // Server exposes the daemon's reports over HTTP.
 type Server struct {
-	store store.Store
-	ready func() bool
-	log   *slog.Logger
-	http  *http.Server
+	store  store.Store
+	status func() Status
+	ready  func() bool
+	log    *slog.Logger
+	http   *http.Server
 }
 
 // New builds a Server.
@@ -53,8 +81,11 @@ func New(opts Options) (*Server, error) {
 	if opts.Ready == nil {
 		opts.Ready = func() bool { return true }
 	}
+	if opts.Status == nil {
+		opts.Status = func() Status { return Status{Ready: opts.Ready()} }
+	}
 
-	s := &Server{store: opts.Store, ready: opts.Ready, log: opts.Logger}
+	s := &Server{store: opts.Store, status: opts.Status, ready: opts.Ready, log: opts.Logger}
 	s.http = &http.Server{
 		Addr:              opts.Addr,
 		Handler:           s.Handler(),
@@ -71,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("GET /v1/status", s.handleStatus)
 	mux.HandleFunc("GET /v1/events", s.handleListEvents)
 	mux.HandleFunc("GET /v1/events/{id}", s.handleGetEvent)
 	return mux
@@ -111,6 +143,16 @@ func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	s.writeText(w, http.StatusOK, "ready\n")
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	payload, err := json.Marshal(s.status())
+	if err != nil {
+		s.log.Error("rendering status", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "rendering status")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, append(payload, '\n'))
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {

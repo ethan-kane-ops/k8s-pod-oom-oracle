@@ -1,0 +1,18 @@
+# Headless: each node's agent holds only its own node's reports, so a load
+# balanced VIP would answer a query about one node's pod from a different node's
+# daemon and report nothing found. Callers resolve individual pods instead.
+apiVersion: v1
+kind: Service
+metadata:
+  name: oom-oracle
+  namespace: oom-oracle
+  labels:
+    app.kubernetes.io/name: oom-oracle
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: oom-oracle
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http

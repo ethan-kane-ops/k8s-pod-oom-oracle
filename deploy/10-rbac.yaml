@@ -1,0 +1,42 @@
+# The daemon reads pods to turn a cgroup path into a namespace, pod, and
+# container name. That is the whole of its cluster access: read-only, and only
+# the objects it correlates against. It never writes to the API server.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oom-oracle
+  namespace: oom-oracle
+  labels:
+    app.kubernetes.io/name: oom-oracle
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: oom-oracle
+  labels:
+    app.kubernetes.io/name: oom-oracle
+rules:
+  # Correlation. A kill arrives as a cgroup path carrying a pod UID; resolving
+  # it to a name means listing pods and watching for changes.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Nodes are read to label reports with the node a kill happened on.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oom-oracle
+  labels:
+    app.kubernetes.io/name: oom-oracle
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: oom-oracle
+subjects:
+  - kind: ServiceAccount
+    name: oom-oracle
+    namespace: oom-oracle

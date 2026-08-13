@@ -62,6 +62,58 @@ bpf-verify: bpf-generate
       || (echo "✗ committed eBPF objects are stale — commit the regenerated files"; exit 1)
     @echo "✓ eBPF objects match their source"
 
+e2e_cluster  := "oom-oracle-e2e"
+e2e_image    := "oom-oracle:e2e"
+e2e_ns       := "oom-oracle"
+e2e_workload := "oom-oracle-e2e"
+
+# Create the kind cluster used by the e2e suite
+#
+# The inotify check is not incidental. Below roughly 512 instances, containerd
+# inside the kind node fails to start its CRI plugin with "too many open files",
+# the kubelet then cannot talk to a runtime, and the cluster dies during
+# kubeadm init with an error that names none of this.
+e2e-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    instances=$(docker run --rm --privileged --pid=host alpine:3.20       sysctl -n fs.inotify.max_user_instances)
+    if [ "$instances" -lt 512 ]; then
+      echo "▶ raising fs.inotify limits in the Docker VM (was $instances)"
+      docker run --rm --privileged --pid=host alpine:3.20 sh -c         'sysctl -w fs.inotify.max_user_watches=524288 >/dev/null
+         sysctl -w fs.inotify.max_user_instances=1024 >/dev/null'
+    fi
+    if kind get clusters 2>/dev/null | grep -qx {{e2e_cluster}}; then
+      echo "✓ cluster {{e2e_cluster}} already exists"
+    else
+      kind create cluster --config test/e2e/kind.yaml --wait 180s
+    fi
+
+# Build the image, load it into kind, and roll out the daemon
+e2e-deploy: e2e-up
+    docker build -q -t {{e2e_image}} .
+    kind load docker-image {{e2e_image}} --name {{e2e_cluster}}
+    kubectl --context kind-{{e2e_cluster}} apply -f deploy/
+    kubectl --context kind-{{e2e_cluster}} create namespace {{e2e_workload}} \
+      --dry-run=client -o yaml | kubectl --context kind-{{e2e_cluster}} apply -f -
+    kubectl --context kind-{{e2e_cluster}} -n {{e2e_ns}} set image \
+      daemonset/oom-oracle oom-oracle={{e2e_image}}
+    kubectl --context kind-{{e2e_cluster}} -n {{e2e_ns}} rollout status \
+      daemonset/oom-oracle --timeout=180s
+
+# Run the end-to-end suite against the deployed daemon
+e2e: e2e-deploy
+    kubectl config use-context kind-{{e2e_cluster}}
+    go test -tags e2e -v -count=1 -timeout 20m ./test/e2e/...
+
+# Tear the cluster down
+e2e-down:
+    kind delete cluster --name {{e2e_cluster}}
+
+# Print the deployed daemon's logs, for when an e2e run fails
+e2e-logs:
+    kubectl --context kind-{{e2e_cluster}} -n {{e2e_ns}} logs \
+      -l app.kubernetes.io/name=oom-oracle --tail=200
+
 # Run linters
 lint:
     go vet ./...

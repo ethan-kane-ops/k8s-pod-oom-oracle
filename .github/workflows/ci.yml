@@ -113,6 +113,38 @@ jobs:
         run: |
           go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  e2e:
+    name: e2e on kind
+    runs-on: ubuntu-latest
+    # The unit suite proves the parsers. Only this proves the product: a real
+    # pod, a real kernel OOM, and the report the deployed daemon made of it.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # containerd inside the kind node opens an fsnotify watcher per CNI conf
+      # directory. Below roughly 512 instances it fails with "too many open
+      # files", the CRI plugin never loads, and kubeadm dies with an error that
+      # mentions none of that.
+      - name: Raise inotify limits
+        run: |
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+          sudo sysctl -w fs.inotify.max_user_instances=1024
+      - uses: helm/kind-action@v1
+        with:
+          config: test/e2e/kind.yaml
+          cluster_name: oom-oracle-e2e
+      - uses: extractions/setup-just@v3
+      - name: Deploy the daemon
+        run: just e2e-deploy
+      - name: Run the suite
+        run: go test -tags e2e -v -count=1 -timeout 20m ./test/e2e/...
+      - name: Daemon logs
+        if: failure()
+        run: just e2e-logs
+
   image:
     name: container image
     runs-on: ubuntu-latest

@@ -191,23 +191,31 @@ func (d *ebpfDetector) enrich(raw rawEvent) KillEvent {
 	return event
 }
 
-// resolveCgroup names the cgroup to attribute the kill to, in descending order
-// of trust.
+// resolveCgroup names the cgroup to attribute the kill to.
 //
-// The memcg the kernel recorded is the cgroup whose limit was actually
-// breached, which is the same thing the polling detector reports and the only
-// answer that is right when a pod-level limit kills a process in a container
-// below it. It is absent for a global OOM, where the node ran out of memory and
-// no single cgroup is at fault.
+// The victim's own cgroup is preferred over the memcg whose limit was breached,
+// and the difference is not academic. Kubernetes sets a limit on the pod slice
+// as well as on each container, so a pod-level breach records
+// oom_memcg=...pod<uid>.slice while the victim lives in
+// ...pod<uid>.slice/cri-containerd-<id>.scope below it. The pod slice carries no
+// container ID, so attributing there loses the container name, cannot list the
+// survivors, and correlates to nothing.
+//
+// The victim's cgroup answers "which container lost a process", which is what a
+// report is for. Which ancestor's limit broke is a different question, and one
+// the trajectory already shows.
 func (d *ebpfDetector) resolveCgroup(raw rawEvent, victim procfs.Process, victimRead bool) string {
-	if path, ok := d.index.Path(raw.MemcgID); ok {
-		return path
-	}
-	// The victim is still alive at this point often enough to be worth asking.
+	// Read straight from the victim while it is still alive: exact, and needs
+	// no index.
 	if victimRead && victim.CgroupPath != "" {
 		return victim.CgroupPath
 	}
 	if path, ok := d.index.Path(raw.TaskCgroupID); ok {
+		return path
+	}
+	// Last resort. A global OOM leaves this zero, and the report then carries
+	// no cgroup at all rather than a wrong one.
+	if path, ok := d.index.Path(raw.MemcgID); ok {
 		return path
 	}
 	return ""

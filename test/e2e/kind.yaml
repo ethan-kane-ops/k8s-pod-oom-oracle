@@ -1,0 +1,8 @@
+# Single node on purpose. The daemon is a node agent that only ever reports on
+# its own node, so a second node would add scheduling races to every test
+# without exercising anything new.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: oom-oracle-e2e
+nodes:
+  - role: control-plane

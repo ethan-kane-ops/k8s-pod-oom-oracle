@@ -40,15 +40,20 @@ type Tracer struct {
 // Failure here is expected on kernels without BTF or without the traced symbol,
 // and the caller is meant to fall back to polling rather than give up.
 func Load() (*Tracer, error) {
-	// The kernel charges BPF maps and programs to RLIMIT_MEMLOCK on releases
-	// before 5.11. Raising it is a no-op on newer kernels, which account this
-	// memory to the cgroup instead.
-	if err := rlimit.RemoveMemlock(); err != nil {
-		return nil, fmt.Errorf("raising memlock limit: %w", err)
-	}
+	// The kernel charges BPF maps and programs to RLIMIT_MEMLOCK only before
+	// 5.11; newer kernels account that memory to the cgroup and ignore the
+	// limit entirely. Failing to raise it is therefore not a reason to give up
+	// before trying to load, and treating it as one made a container that could
+	// have traced fine fall back to polling. The error is kept back in case the
+	// load does fail, where it is the likely cause.
+	memlockErr := rlimit.RemoveMemlock()
 
 	tracer := &Tracer{}
 	if err := loadOomtracerObjects(&tracer.objs, nil); err != nil {
+		if memlockErr != nil {
+			return nil, fmt.Errorf("loading oom tracer: %w (memlock limit was not raised: %v)",
+				verifierDetail(err), memlockErr)
+		}
 		return nil, fmt.Errorf("loading oom tracer: %w", verifierDetail(err))
 	}
 
