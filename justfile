@@ -45,6 +45,23 @@ docker-build:
       --build-arg BUILD_DATE={{build_date}} \
       -t {{binary}}:{{version}} .
 
+# Regenerate the eBPF objects in internal/detector/bpf.
+#
+# Runs in a container because macOS clang has no BPF backend. The generated .o
+# and .go files are committed, so this is only needed after editing the C.
+bpf-generate:
+    docker build -q -t oom-oracle-bpf:local -f build/bpf/Dockerfile build/bpf
+    docker run --rm -u "$(id -u):$(id -g)" \
+      -v "$PWD:/src" -w /src/internal/detector/bpf \
+      -e HOME=/tmp -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomodcache \
+      oom-oracle-bpf:local go generate ./...
+
+# Fail if the committed eBPF objects no longer match the C source.
+bpf-verify: bpf-generate
+    @git diff --exit-code -- internal/detector/bpf \
+      || (echo "✗ committed eBPF objects are stale — commit the regenerated files"; exit 1)
+    @echo "✓ eBPF objects match their source"
+
 # Run linters
 lint:
     go vet ./...

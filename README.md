@@ -53,6 +53,40 @@ flowchart TD
 
 ---
 
+## 🔬 Two Detectors, One Report
+
+Detection sits behind an interface with two implementations. `--detector` picks
+one; the default `auto` tries eBPF and falls back to polling, saying so in the
+logs.
+
+| | `ebpf` | `poller` |
+|---|---|---|
+| Source | kprobe on `oom_kill_process` | `memory.events.local` counters |
+| Victim | named by the kernel as it chose | deduced from which process vanished |
+| Memory at death | exact, read from the victim's `mm` | from the last snapshot, up to one interval stale |
+| Command line | read from `/proc` before `SIGKILL` lands | often unavailable |
+| Needs | BTF, `CAP_BPF`/`CAP_SYS_ADMIN`, kernel ≥ 5.8 | readable `cgroupfs`, kernel ≥ 5.13 |
+
+The same workload traced both ways, a container whose forked child is killed
+while the container itself survives:
+
+```
+ebpf     victim=tail  cmdline=[tail /dev/zero]  rss=511.0MiB  inferred=false
+poller   victim=tail  cmdline=<none>            rss=0         inferred=true
+```
+
+The poller found the right process by name but had only a snapshot taken before
+it grew, so it reports no memory and flags the answer as a guess. Reports carry
+`source` and `victim.inferred` precisely so a reader can tell which of these
+they are looking at.
+
+The probe reads kernel structs through CO-RE, so one compiled object works
+across kernel versions that moved the fields, including the 6.2 rewrite of
+`mm_struct.rss_stat`. It attaches to a kprobe rather than the `oom/mark_victim`
+tracepoint because that tracepoint's layout is not a stable ABI.
+
+---
+
 ## 💻 Visual Terminal Post-Mortem
 
 Inspect incident diagnostics with a single command:
@@ -128,8 +162,25 @@ Because OOM Oracle relies on eBPF to attach to host kernel events, the daemon mu
    just check # executes vet, linter checks, and unit tests
    ```
 
+The compiled eBPF objects in `internal/detector/bpf` are committed, so none of
+the above needs clang. After editing the BPF C, regenerate them:
+
+```bash
+just bpf-generate  # compiles in a pinned container
+just bpf-verify    # fails if the committed objects are stale (also runs in CI)
+```
+
+This runs in Docker because Apple's clang has no BPF backend. Developing on a
+Mac otherwise works normally: the detector is unavailable there, the rest of
+the tool is not.
+
 ---
 
 ## 📄 License
 
 Distributed under the Apache License 2.0. See `LICENSE` for details.
+
+`internal/detector/bpf/oomtracer.bpf.c` is the one exception: it is GPL-2.0, as
+marked by its SPDX header. It calls GPL-only BPF helpers, and the kernel refuses
+to load a program that declares any other licence. It is compiled to a BPF
+object and loaded into the kernel, not linked into the Go binary.

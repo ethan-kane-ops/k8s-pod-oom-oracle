@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/cgroup"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/correlate"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/detector"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/oom"
@@ -26,6 +27,10 @@ type Options struct {
 	Sampler *sampler.Sampler
 	// Store retains finished reports. Required.
 	Store store.Store
+	// Cgroup re-reads the affected cgroup when a report is built. Optional but
+	// wanted: see buildReport for why sampled history alone understates the
+	// peak.
+	Cgroup *cgroup.FS
 	// Resolver maps cgroup paths to Kubernetes identities. Required.
 	Resolver *correlate.Resolver
 	// Proc lists surviving processes for the hog listing. Optional.
@@ -46,6 +51,7 @@ type Daemon struct {
 	detector  detector.Detector
 	sampler   *sampler.Sampler
 	store     store.Store
+	cgroup    *cgroup.FS
 	resolver  *correlate.Resolver
 	proc      *procfs.FS
 	onReport  func(context.Context, oom.Report)
@@ -81,6 +87,7 @@ func New(opts Options) (*Daemon, error) {
 		detector:  opts.Detector,
 		sampler:   opts.Sampler,
 		store:     opts.Store,
+		cgroup:    opts.Cgroup,
 		resolver:  opts.Resolver,
 		proc:      opts.Proc,
 		onReport:  opts.OnReport,
@@ -186,6 +193,8 @@ func (d *Daemon) buildReport(event detector.KillEvent) (oom.Report, bool) {
 		}
 	}
 
+	d.applyLiveStats(&report, event)
+
 	if d.proc != nil {
 		survivors, err := d.proc.ProcessesInCgroup(event.CgroupPath)
 		if err != nil {
@@ -196,6 +205,38 @@ func (d *Daemon) buildReport(event detector.KillEvent) (oom.Report, bool) {
 	}
 
 	return report, true
+}
+
+// applyLiveStats corrects the headline numbers using the cgroup itself.
+//
+// Sampled history is up to one interval stale, and a container can go from idle
+// to its limit inside that window: the run that motivated this reported a 4.4MiB
+// peak for a container the kernel killed at 512MiB, because the last sample
+// predated the whole balloon. memory.peak is monotonic, so re-reading it here
+// recovers the true high-water mark even though memory.current has already
+// collapsed.
+//
+// When the container was killed outright its cgroup is already gone and the
+// read fails. The victim's own resident memory is then used as a floor, since
+// the container cannot have peaked below what one of its processes was holding.
+func (d *Daemon) applyLiveStats(report *oom.Report, event detector.KillEvent) {
+	if d.cgroup != nil {
+		if stats, err := d.cgroup.ReadMemoryStats(event.CgroupPath); err == nil {
+			if stats.Peak > report.PeakBytes {
+				report.PeakBytes = stats.Peak
+			}
+			if report.LimitBytes == 0 && stats.Limit != unlimitedLimit {
+				report.LimitBytes = stats.Limit
+			}
+		} else {
+			d.log.Debug("re-reading cgroup at report time",
+				"cgroup", event.CgroupPath, "error", err)
+		}
+	}
+
+	if report.PeakBytes < event.Victim.RSSBytes {
+		report.PeakBytes = event.Victim.RSSBytes
+	}
 }
 
 // unlimitedLimit mirrors cgroup.Unlimited.

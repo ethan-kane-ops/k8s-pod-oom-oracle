@@ -28,6 +28,19 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+  bpf:
+    name: ebpf objects
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
+      # The compiled BPF objects are committed so that building this project
+      # needs only Go. That is only safe if something checks they still match
+      # the C they came from, which is what this does: regenerate in the pinned
+      # container and fail if anything moved.
+      - name: Verify committed eBPF objects match their source
+        run: just bpf-verify
+
   lint:
     name: lint
     runs-on: ubuntu-latest

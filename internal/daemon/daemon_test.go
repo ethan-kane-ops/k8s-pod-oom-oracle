@@ -70,6 +70,7 @@ func newHarness(t *testing.T, lookup correlate.PodLookup) *harness {
 		Detector: detector.NewFake(),
 		Sampler:  h.sampler,
 		Store:    h.store,
+		Cgroup:   cg,
 		Resolver: correlate.NewResolver(lookup),
 		Proc:     procFS,
 	})
@@ -100,6 +101,30 @@ func (h *harness) addProcess(pid int, comm string, rssKB int) {
 	}
 	h.procs[dir+"/cmdline"] = &fstest.MapFile{Data: []byte(comm + "\x00")}
 	h.procs[dir+"/cgroup"] = &fstest.MapFile{Data: []byte("0::" + containerCgroup + "\n")}
+}
+
+// collect takes one sampler pass and advances the clock.
+func (h *harness) collect(t *testing.T) {
+	t.Helper()
+
+	if err := h.sampler.Collect(); err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	h.clock = h.clock.Add(time.Second)
+}
+
+// latest returns the single stored report.
+func (h *harness) latest(t *testing.T) oom.Report {
+	t.Helper()
+
+	reports, err := h.store.List(t.Context(), store.Filter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("len(reports) = %d, want 1", len(reports))
+	}
+	return reports[0]
 }
 
 func testLookup() correlate.MapPodLookup {
@@ -403,5 +428,65 @@ func TestRunConsumesDetectorEvents(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("Run() error = %v, want nil on cancellation", err)
+	}
+}
+
+func TestHandleCorrectsPeakFromLiveCgroup(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, testLookup())
+
+	// A container that sat idle and then filled its limit faster than the
+	// sampler runs. Every sample sees the idle figure, including the peak,
+	// because memory.peak had not moved yet when the last one was taken.
+	h.setMemory(1<<20, 512<<20, 1<<20)
+	h.collect(t)
+
+	// The kernel's own high-water mark, readable after the kill because
+	// memory.peak is monotonic.
+	h.setMemory(1<<20, 512<<20, 512<<20)
+
+	h.daemon.Handle(t.Context(), killEvent())
+
+	report := h.latest(t)
+	if want := uint64(512 << 20); report.PeakBytes != want {
+		t.Errorf("PeakBytes = %d, want %d from the live cgroup rather than the stale sample",
+			report.PeakBytes, want)
+	}
+}
+
+func TestHandleFloorsPeakAtVictimMemory(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, testLookup())
+
+	// No cgroup files at all: the container was killed outright and the
+	// kernel destroyed its cgroup before the report was built. Reporting a
+	// peak below what the victim alone was holding would be self-contradictory
+	// on the face of the report.
+	h.daemon.Handle(t.Context(), killEvent())
+
+	report := h.latest(t)
+	if want := uint64(114 << 20); report.PeakBytes != want {
+		t.Errorf("PeakBytes = %d, want the victim's %d as a floor", report.PeakBytes, want)
+	}
+}
+
+func TestHandleKeepsHigherSampledPeak(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, testLookup())
+
+	// memory.peak can be reset by writing to it, so a live read is not always
+	// the larger number. Whichever evidence is highest wins.
+	h.setMemory(400<<20, 512<<20, 480<<20)
+	h.collect(t)
+	h.setMemory(1<<20, 512<<20, 0)
+
+	h.daemon.Handle(t.Context(), killEvent())
+
+	if report := h.latest(t); report.PeakBytes != 480<<20 {
+		t.Errorf("PeakBytes = %d, want the sampled %d to survive a reset counter",
+			report.PeakBytes, uint64(480<<20))
 	}
 }
