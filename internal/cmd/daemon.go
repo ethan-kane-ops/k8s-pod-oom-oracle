@@ -125,6 +125,7 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, cfg daemonConfig) error 
 		Detector:             killDetector,
 		Sampler:              memorySampler,
 		Store:                reports,
+		Cgroup:               cgroupFS,
 		Resolver:             correlate.NewResolver(nil),
 		Proc:                 procFS,
 		IncludeNonKubernetes: cfg.includeAll,
@@ -155,10 +156,10 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, cfg daemonConfig) error 
 
 // buildDetector selects a detection method.
 //
-// The eBPF detector is not implemented yet (ENG-106). Until it lands, auto
-// resolves to polling and an explicit --detector=ebpf is a clear error rather
-// than a silent downgrade: a user who asked for exact victim attribution should
-// not be given inferred victims without being told.
+// auto prefers eBPF and falls back to polling, logging why. An explicit
+// --detector=ebpf never falls back: a user who asked for traced victims should
+// be told the kernel refused rather than handed inferred ones that look the
+// same in every field except a boolean.
 func buildDetector(
 	cfg daemonConfig,
 	cgroupFS *cgroup.FS,
@@ -166,21 +167,54 @@ func buildDetector(
 	log *slog.Logger,
 ) (detector.Detector, error) {
 	switch cfg.detectorName {
-	case detectorAuto, detectorPoller:
-		if cfg.detectorName == detectorAuto {
-			log.Info("using the polling detector", "reason", "eBPF detector not yet available")
-		}
-		return detector.NewPoller(detector.PollerOptions{
-			Cgroup:   cgroupFS,
-			Proc:     procFS,
-			Prefix:   cfg.cgroupPrefix,
-			Interval: cfg.pollEvery,
-			Logger:   log,
-		})
 	case detectorEBPF:
-		return nil, errors.New("the ebpf detector is not implemented yet; use --detector=poller")
+		return newEBPFDetector(cfg, cgroupFS, procFS, log)
+
+	case detectorAuto:
+		traced, err := newEBPFDetector(cfg, cgroupFS, procFS, log)
+		if err == nil {
+			log.Info("using the eBPF detector", "kprobe", "oom_kill_process")
+			return traced, nil
+		}
+		log.Info("falling back to the polling detector",
+			"reason", err,
+			"effect", "victims are inferred from process snapshots, not traced")
+		return newPollingDetector(cfg, cgroupFS, procFS, log)
+
+	case detectorPoller:
+		return newPollingDetector(cfg, cgroupFS, procFS, log)
+
 	default:
 		return nil, fmt.Errorf("unknown detector %q: want %s, %s, or %s",
 			cfg.detectorName, detectorAuto, detectorPoller, detectorEBPF)
 	}
+}
+
+func newEBPFDetector(
+	cfg daemonConfig,
+	cgroupFS *cgroup.FS,
+	procFS *procfs.FS,
+	log *slog.Logger,
+) (detector.Detector, error) {
+	return detector.NewEBPF(detector.EBPFOptions{
+		CgroupRoot: cfg.cgroupRoot,
+		Cgroup:     cgroupFS,
+		Proc:       procFS,
+		Logger:     log,
+	})
+}
+
+func newPollingDetector(
+	cfg daemonConfig,
+	cgroupFS *cgroup.FS,
+	procFS *procfs.FS,
+	log *slog.Logger,
+) (detector.Detector, error) {
+	return detector.NewPoller(detector.PollerOptions{
+		Cgroup:   cgroupFS,
+		Proc:     procFS,
+		Prefix:   cfg.cgroupPrefix,
+		Interval: cfg.pollEvery,
+		Logger:   log,
+	})
 }
