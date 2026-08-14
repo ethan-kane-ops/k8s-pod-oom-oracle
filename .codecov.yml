@@ -1,0 +1,118 @@
+# Codecov thresholds.
+#
+# Targets are per-component rather than a single repo-wide number, because the
+# packages here do not carry equal risk. A parser that misreads a cgroup file
+# produces a wrong post-mortem silently; a flag default does not.
+#
+# Coverage taken on Linux is the authority. The eBPF detector sits behind
+# "linux && (amd64 || arm64)" build tags, so a macOS run does not compile it and
+# reports internal/detector/bpf as having no tests at all.
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0.5%
+        informational: false
+    patch:
+      default:
+        target: 80%
+        threshold: 0.5%
+        informational: false
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+
+ignore:
+  # Generated from the BPF C by bpf2go. bpf-verify guards these, not tests.
+  - "internal/detector/bpf/*_bpfel.go"
+  # Process wiring: an exit code and a call into internal/cmd.
+  - "cmd/**/main.go"
+  # Covered by running it, not by measuring it.
+  - "test/e2e/**"
+  - "**/*_test.go"
+  - "deploy/**"
+  - "build/**"
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 0.5%
+  individual_components:
+    # Everything downstream trusts these parsers. They read kernel-supplied
+    # text whose format shifts between versions, and a misparse is invisible.
+    - component_id: cgroup
+      name: cgroup
+      paths:
+        - "internal/cgroup/**"
+      statuses:
+        - type: project
+          target: 85%
+          threshold: 0.5%
+    - component_id: procfs
+      name: procfs
+      paths:
+        - "internal/procfs/**"
+      statuses:
+        - type: project
+          target: 85%
+          threshold: 0.5%
+    # Naming the victim is the product. An error here is a wrong answer
+    # presented with full confidence.
+    - component_id: detector
+      name: detector
+      paths:
+        - "internal/detector/**"
+      statuses:
+        - type: project
+          target: 85%
+          threshold: 0.5%
+    - component_id: correlate
+      name: correlate
+      paths:
+        - "internal/correlate/**"
+      statuses:
+        - type: project
+          target: 90%
+          threshold: 0.5%
+    - component_id: k8s
+      name: k8s
+      paths:
+        - "internal/k8s/**"
+      statuses:
+        - type: project
+          target: 85%
+          threshold: 0.5%
+    - component_id: daemon
+      name: daemon
+      paths:
+        - "internal/daemon/**"
+        - "internal/sampler/**"
+        - "internal/store/**"
+      statuses:
+        - type: project
+          target: 80%
+          threshold: 0.5%
+    - component_id: api
+      name: api
+      paths:
+        - "internal/api/**"
+        - "internal/render/**"
+      statuses:
+        - type: project
+          target: 80%
+          threshold: 0.5%
+    - component_id: cli
+      name: cli
+      paths:
+        - "internal/cmd/**"
+        - "internal/version/**"
+      statuses:
+        - type: project
+          target: 75%
+          threshold: 0.5%
