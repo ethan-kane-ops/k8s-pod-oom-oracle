@@ -57,16 +57,21 @@ jobs:
 
       - name: Vet both target platforms
         run: |
-          GOOS=linux go vet ./...
+          GOOS=linux go vet -tags e2e ./...
           GOOS=darwin go vet ./...
 
       # The eBPF detector and its !linux fallback are exact-complement build
       # tags, so a single-platform run always leaves one of them uncompiled and
       # therefore unlinted. This pass covers linux; the next covers the
       # fallback. Dropping either is how an errorlint failure reached main.
+      #
+      # The e2e tag rides along with the linux pass. test/e2e has no
+      # platform-specific files, so linting it once is enough, but linting it
+      # zero times is what happened before.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
+          args: --build-tags e2e
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         env:
           GOOS: darwin

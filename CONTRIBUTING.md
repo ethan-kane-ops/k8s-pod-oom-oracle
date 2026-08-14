@@ -60,7 +60,8 @@ a plain `go build` never needs clang on any platform.
 non-Linux fallback sit behind mutually exclusive build tags. A run on one `GOOS`
 never compiles the other file, so a single pass always leaves half the package
 unchecked. This is not hypothetical: it is how an `errorlint` failure reached
-`main`.
+`main`. The Linux pass also carries `--build-tags e2e`, because without it
+`test/e2e` is invisible to every linter in the repo.
 
 **The eBPF objects are committed.** After editing
 `internal/detector/bpf/oomtracer.bpf.c` you must run `just bpf-generate` and

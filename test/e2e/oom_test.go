@@ -8,8 +8,11 @@ import (
 	"time"
 )
 
-// oomTimeout bounds how long a kill may take to surface. A poll interval plus
-// scheduling plus image pull on a cold CI runner fits comfortably inside it.
+// oomTimeout bounds how long a kill may take to surface once the workload is
+// already executing. It covers a sample interval, the balloon itself, and the
+// hop from probe to HTTP API. Scheduling and container startup are deliberately
+// outside it: waitForPodStarted absorbs those, so a timeout here means the
+// daemon genuinely failed to report a kill.
 const oomTimeout = 90 * time.Second
 
 func TestDaemonIsWatchingTheNode(t *testing.T) {
@@ -89,7 +92,8 @@ func TestContainerOOMKilledOutright(t *testing.T) {
 	applyPod(t, singleProcessManifest(name))
 
 	uid := waitForPodUID(t, name)
-	found := waitForReport(t, daemon, before, uid)
+	waitForPodStarted(t, name)
+	found := waitForReport(t, daemon, name, before, uid)
 
 	if !found.Victim.Known {
 		t.Error("victim is unknown; the kill was seen but nothing was identified")
@@ -128,7 +132,8 @@ func TestContainerSurvivesChildOOM(t *testing.T) {
 	applyPod(t, multiProcessManifest(name))
 
 	uid := waitForPodUID(t, name)
-	found := waitForReport(t, daemon, before, uid)
+	waitForPodStarted(t, name)
+	found := waitForReport(t, daemon, name, before, uid)
 
 	if !found.Victim.Known {
 		t.Fatal("victim is unknown; a child died and the daemon could not say which")
@@ -209,11 +214,14 @@ func waitForPodUID(t *testing.T, name string) string {
 // Matching on the UID rather than on "the newest report" is what stops one
 // test's kill satisfying another's assertion when they run against a shared
 // daemon.
-func waitForReport(t *testing.T, daemon string, before int, uid string) report {
+func waitForReport(t *testing.T, daemon, podName string, before int, uid string) report {
 	t.Helper()
 
 	var found report
-	eventually(t, oomTimeout, "an OOM report for pod uid "+uid, func() error {
+	// The pod's own state is attached to the timeout because the two
+	// explanations for a missing report look identical from here: the daemon
+	// saw no kill, or the workload never produced one.
+	eventuallyDiag(t, oomTimeout, "an OOM report for pod uid "+uid, func() error {
 		reports := daemonReports(t, daemon)
 		for _, candidate := range reports {
 			if candidate.Identity.PodUID == uid {
@@ -223,7 +231,7 @@ func waitForReport(t *testing.T, daemon string, before int, uid string) report {
 		}
 		return fmt.Errorf("no report for uid %s among %d reports (%d before the test)",
 			uid, len(reports), before)
-	})
+	}, func() string { return podDiagnostics(t, podName) })
 	return found
 }
 
@@ -239,7 +247,8 @@ spec:
   restartPolicy: Never
   containers:
     - name: hog
-      image: alpine:3.20
+      image: %s
+      imagePullPolicy: Never
       command: ["sh", "-c"]
       # Climbs in steps so the sampler records a trajectory rather than a single
       # jump from idle to dead.
@@ -252,7 +261,7 @@ spec:
           memory: 128Mi
         requests:
           memory: 64Mi
-`, name)
+`, name, workloadImage)
 }
 
 // multiProcessManifest keeps PID 1 alive while a child is killed. The pod stays
@@ -267,7 +276,8 @@ spec:
   restartPolicy: Never
   containers:
     - name: app
-      image: alpine:3.20
+      image: %s
+      imagePullPolicy: Never
       command: ["sh", "-c"]
       args:
         - |
@@ -282,5 +292,5 @@ spec:
           memory: 512Mi
         requests:
           memory: 64Mi
-`, name)
+`, name, workloadImage)
 }

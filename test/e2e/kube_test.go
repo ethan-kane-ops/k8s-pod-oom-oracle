@@ -14,6 +14,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -28,6 +29,16 @@ const (
 	workloadNamespace = "oom-oracle-e2e"
 	// apiPort must match the containerPort in deploy/daemonset.yaml.
 	apiPort = 9090
+	// workloadImage is what every test pod runs. It must match
+	// e2e_workload_image in the justfile, which builds it and loads it into the
+	// kind node before the suite starts.
+	//
+	// The tag exists in no registry, and the manifests pin
+	// imagePullPolicy: Never against it. That is the point: if the preload ever
+	// stops matching this constant, the pod fails immediately with
+	// ErrImageNeverPull naming the image, rather than sitting in Pending while
+	// a report timeout expires and blames the daemon.
+	workloadImage = "oom-oracle-workload:e2e"
 )
 
 // kubectl runs a kubectl command and returns its stdout.
@@ -163,26 +174,46 @@ func daemonReports(t *testing.T, pod string) []report {
 func eventually(t *testing.T, timeout time.Duration, what string, check func() error) {
 	t.Helper()
 
+	eventuallyDiag(t, timeout, what, check, nil)
+}
+
+// eventuallyDiag is eventually with a diagnosis attached to the timeout.
+//
+// diagnose runs once, after the deadline passes, never inside the loop. It
+// costs several API calls, and only the final failure message is ever read, so
+// gathering it on every poll would be a hundredfold waste that also slows the
+// polling it is meant to explain.
+func eventuallyDiag(t *testing.T, timeout time.Duration, what string, check func() error, diagnose func() string) {
+	t.Helper()
+
 	deadline := time.Now().Add(timeout)
 	var last error
 	for time.Now().Before(deadline) {
-		if last = check(); last == nil {
+		last = check()
+		switch {
+		case last == nil:
 			return
+		case errors.Is(last, errTerminal):
+			t.Fatalf("waiting for %s: %v", what, last)
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+	if diagnose != nil {
+		t.Fatalf("timed out after %s waiting for %s: %v; %s", timeout, what, last, diagnose())
 	}
 	t.Fatalf("timed out after %s waiting for %s: %v", timeout, what, last)
 }
 
-// podUID returns a pod's UID, which is what the daemon parses out of the cgroup
-// path and the only identity the suite can assert on end to end.
-func podUID(t *testing.T, namespace, name string) string {
-	t.Helper()
+// errTerminal marks a condition that polling cannot resolve, so eventuallyDiag
+// stops rather than serving out its timeout. A missing image is the case that
+// matters: the kubelet decides in under a second and never revisits it, and
+// spending the remaining ninety seconds re-reading that answer only delays a
+// message that was already final.
+var errTerminal = errors.New("terminal")
 
-	return kubectl(t, "get", "pod", name, "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-}
-
-// applyPod creates a pod from a manifest and waits for it to start running.
+// applyPod creates a pod from a manifest. It does not wait for anything: the
+// API server accepts the object long before the pod is scheduled, let alone
+// running. Callers that need a started container use waitForPodStarted.
 func applyPod(t *testing.T, manifest string) {
 	t.Helper()
 
@@ -194,6 +225,82 @@ func applyPod(t *testing.T, manifest string) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("applying pod: %v: %s", err, stderr.String())
 	}
+}
+
+// waitForPodStarted blocks until the pod's container has begun executing.
+//
+// Without this, the report timeout silently covers scheduling and container
+// startup as well as detection, so anything slow before the first instruction
+// runs is reported as the daemon having missed a kill.
+//
+// The condition is "no longer waiting" rather than "running", because a
+// container that exceeds its limit quickly can be Terminated before any poll
+// observes it Running. Both mean the same thing here: it executed.
+func waitForPodStarted(t *testing.T, name string) {
+	t.Helper()
+
+	// Asking for the startedAt timestamps rather than for the state object keeps
+	// this off kubectl's rendering of a map. Either being present means the
+	// container executed. The waiting reason comes back in the same call so a
+	// poll costs one request rather than two.
+	const state = "{.status.containerStatuses[0].state.running.startedAt}" +
+		"{.status.containerStatuses[0].state.terminated.startedAt}" +
+		"{\"\\t\"}{.status.containerStatuses[0].state.waiting.reason}"
+
+	eventuallyDiag(t, 90*time.Second, "pod "+name+" to start its container", func() error {
+		out, err := runKubectl("get", "pod", name, "-n", workloadNamespace, "-o", "jsonpath="+state)
+		if err != nil {
+			return err
+		}
+		startedAt, reason, _ := strings.Cut(out, "\t")
+		if strings.TrimSpace(startedAt) != "" {
+			return nil
+		}
+		if terminalWaitReasons[strings.TrimSpace(reason)] {
+			return fmt.Errorf("%w: pod %s cannot start: %s; %s",
+				errTerminal, name, strings.TrimSpace(reason), podDiagnostics(t, name))
+		}
+		return errors.New("container is still waiting")
+	}, func() string { return podDiagnostics(t, name) })
+}
+
+// terminalWaitReasons are container waiting reasons that no amount of waiting
+// resolves. Every one of them means the image the suite expects to be preloaded
+// is not on the node, which is a setup fault, not a slow start.
+var terminalWaitReasons = map[string]bool{
+	"ErrImageNeverPull": true,
+	"InvalidImageName":  true,
+	"ImagePullBackOff":  true,
+	"ErrImagePull":      true,
+}
+
+// podDiagnostics summarises why a pod is not doing what a test expected.
+//
+// A failure that says only "no report arrived" cannot distinguish a daemon that
+// missed a kill from a pod that never ran, and those have nothing in common.
+func podDiagnostics(t *testing.T, name string) string {
+	t.Helper()
+
+	const summary = "{.metadata.uid}{\"\\t\"}{.status.phase}{\"\\t\"}" +
+		"{.status.containerStatuses[*].state}"
+
+	out, err := runKubectl("get", "pod", name, "-n", workloadNamespace, "-o", "jsonpath="+summary)
+	if err != nil {
+		return fmt.Sprintf("pod %s could not be read: %v", name, err)
+	}
+	uid, rest, _ := strings.Cut(out, "\t")
+	phase, state, _ := strings.Cut(rest, "\t")
+
+	// Events are selected by UID, not by name. Every test reuses a fixed pod
+	// name and events outlive the object, so selecting by name mixes in the
+	// previous run's pod and prints "Container started" directly above the
+	// reason this one could not start.
+	events, _ := runKubectl("get", "events", "-n", workloadNamespace,
+		"--field-selector", "involvedObject.uid="+uid,
+		"-o", "jsonpath={range .items[*]}{.reason}: {.message}{\"; \"}{end}")
+
+	return fmt.Sprintf("pod %s phase=%s state=%s events=[%s]",
+		name, phase, strings.TrimSpace(state), strings.TrimSpace(events))
 }
 
 func deletePod(t *testing.T, name string) {
