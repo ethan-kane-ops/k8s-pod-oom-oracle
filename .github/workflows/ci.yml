@@ -1,13 +1,32 @@
 name: CI
 
+# The PR critical path. Everything here is fast, deterministic, and caused by
+# the diff. Work that is none of those lives in its own workflow:
+#
+#   e2e.yml          a kind cluster, on a label or a nightly cron
+#   govulncheck.yml  advisories land on their own schedule, not the diff's
+#   codeql.yml       deep analysis, scheduled
+#   fuzz.yml         a growing corpus with a time budget
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "examples/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "examples/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,47 +37,37 @@ jobs:
     name: go mod tidy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-          cache: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - name: Verify go.mod and go.sum are tidy
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-  bpf:
-    name: ebpf objects
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
-      # The compiled BPF objects are committed so that building this project
-      # needs only Go. That is only safe if something checks they still match
-      # the C they came from, which is what this does: regenerate in the pinned
-      # container and fail if anything moved.
-      - name: Verify committed eBPF objects match their source
-        run: just bpf-verify
-
   lint:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-          cache: true
-      - run: go vet ./...
-      - uses: golangci/golangci-lint-action@v8
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+
+      - name: Vet both target platforms
+        run: |
+          GOOS=linux go vet ./...
+          GOOS=darwin go vet ./...
+
+      # The eBPF detector and its !linux fallback are exact-complement build
+      # tags, so a single-platform run always leaves one of them uncompiled and
+      # therefore unlinted. This pass covers linux; the next covers the
+      # fallback. Dropping either is how an errorlint failure reached main.
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
-      # The eBPF detector and its !linux fallback are mutually exclusive build
-      # tags, so a single-platform run always leaves one of them uncompiled and
-      # therefore unlinted. The pass above covers linux; this one covers the
-      # fallback.
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         env:
           GOOS: darwin
         with:
@@ -67,17 +76,33 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-          cache: true
-      - name: Run tests with race detector and coverage
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+
+      # The race detector is not optional here. The bugs this codebase produces
+      # are concurrent ones that fail on a busy node, not on a laptop.
+      - name: Run tests with the race detector
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
       - name: Coverage summary
-        run: go tool cover -func=coverage.out
-      - uses: actions/upload-artifact@v4
+        run: go tool cover -func=coverage.out | tail -1
+
+      # Codecov needs no token on a public repo. While this one is private an
+      # absent token would fail every run, so the step is skipped instead of
+      # made noisy. ENG-127 drops the condition.
+      - name: Upload coverage to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: coverage.out
+          fail_ci_if_error: true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: coverage.out
@@ -97,11 +122,12 @@ jobs:
           - goos: darwin
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-          cache: true
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          just: "false"
       - name: Cross-compile
         env:
           CGO_ENABLED: "0"
@@ -109,59 +135,31 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: go build -trimpath -o /dev/null ./cmd/oom-oracle
 
-  vuln:
-    name: govulncheck
+  bpf:
+    name: ebpf objects
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-          cache: true
-      - name: Run govulncheck
-        run: |
-          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-
-  e2e:
-    name: e2e on kind
-    runs-on: ubuntu-latest
-    # The unit suite proves the parsers. Only this proves the product: a real
-    # pod, a real kernel OOM, and the report the deployed daemon made of it.
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      # containerd inside the kind node opens an fsnotify watcher per CNI conf
-      # directory. Below roughly 512 instances it fails with "too many open
-      # files", the CRI plugin never loads, and kubeadm dies with an error that
-      # mentions none of that.
-      - name: Raise inotify limits
-        run: |
-          sudo sysctl -w fs.inotify.max_user_watches=524288
-          sudo sysctl -w fs.inotify.max_user_instances=1024
-      - uses: helm/kind-action@v1
-        with:
-          config: test/e2e/kind.yaml
-          cluster_name: oom-oracle-e2e
-      - uses: extractions/setup-just@v3
-      - name: Deploy the daemon
-        run: just e2e-deploy
-      - name: Run the suite
-        run: go test -tags e2e -v -count=1 -timeout 20m ./test/e2e/...
-      - name: Daemon logs
-        if: failure()
-        run: just e2e-logs
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      # The compiled BPF objects are committed so that building this project
+      # needs only Go. That is only safe if something checks they still match
+      # the C they came from, which is what this does: regenerate in the pinned
+      # container and fail if anything moved.
+      - name: Verify committed eBPF objects match their source
+        run: just bpf-verify
 
   image:
     name: container image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Build image (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           push: false

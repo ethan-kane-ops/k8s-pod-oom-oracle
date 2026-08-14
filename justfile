@@ -126,6 +126,26 @@ lint:
     GOOS=linux golangci-lint run
     GOOS=darwin golangci-lint run
 
+# Fuzz every parser target for the given budget each (default 60s)
+#
+# go test -fuzz takes exactly one target per run, so this enumerates them
+# rather than relying on a pattern. Every target runs even after one fails,
+# because finding two crashers in a run is more useful than finding the first.
+fuzz time="60s":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    failed=0
+    for pkg in ./internal/cgroup ./internal/procfs ./internal/correlate; do
+      for target in $(go test "$pkg" -list 'Fuzz.*' 2>/dev/null | grep '^Fuzz' || true); do
+        echo "▶ $pkg $target ({{time}})"
+        if ! go test "$pkg" -run "^${target}$" -fuzz "^${target}$" -fuzztime={{time}}; then
+          failed=1
+        fi
+      done
+    done
+    if [ "$failed" -ne 0 ]; then echo "✗ a fuzz target failed"; exit 1; fi
+    echo "✓ all fuzz targets survived {{time}} each"
+
 # Tidy go modules
 tidy:
     go mod tidy

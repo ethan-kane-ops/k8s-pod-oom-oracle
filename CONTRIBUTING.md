@@ -47,6 +47,7 @@ a plain `go build` never needs clang on any platform.
 | `just test-cover` | Tests plus a per-package coverage summary |
 | `just lint` | `go vet` and `golangci-lint`, both target platforms |
 | `just check` | tidy + lint + race tests. **Required before every commit** |
+| `just fuzz [time]` | Fuzz every parser target for the given budget each, default 60s |
 | `just e2e` | Create a kind cluster, deploy, run the end-to-end suite |
 | `just e2e-logs` | The deployed daemon's logs, for when an e2e run fails |
 | `just e2e-down` | Tear the kind cluster down |
