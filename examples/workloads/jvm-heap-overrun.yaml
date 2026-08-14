@@ -1,0 +1,70 @@
+# A JVM whose -Xmx is larger than its container limit.
+#
+# The classic misconfiguration, and one of the few OOM kills that is genuinely
+# hard to read from Kubernetes alone.
+#
+# Modern JVMs are container-aware: with no -Xmx they read the cgroup limit and
+# size the heap to a fraction of it. Setting -Xmx explicitly overrides that
+# safety. Here the JVM is told it may use 1GB of heap inside a container limited
+# to 256Mi, so it commits past the limit and the kernel kills it.
+#
+# What makes this confusing in practice is the error you *do not* get. The JVM
+# never throws OutOfMemoryError, never runs a shutdown hook, and never writes a
+# heap dump, because from its own point of view nothing was wrong. There is no
+# Java stack trace to find. The process simply stops.
+#
+#   kubectl apply -f examples/workloads/jvm-heap-overrun.yaml
+#
+# EXPECTED REPORT (abridged, from a real run on kind):
+#
+#   source        ebpf
+#   pod           default/oom-jvm-heap/jvm
+#   victim        java, nsPid 1, rss 277872640, inferred false
+#   limitBytes    268435456        (256 MiB, the limit below)
+#   peakBytes     277872640        (265 MiB: above the limit, see below)
+#
+# Two things to notice.
+#
+# `nsPid 1` says the JVM was the container's main process, not a child of it.
+# Nothing survives that, which is why there is no supervisor left to log an
+# error and no evidence anywhere except this report.
+#
+# `peakBytes` is *larger* than `limitBytes`. That is not a bug in the report:
+# `memory.peak` records the high-water mark the cgroup actually reached, and a
+# cgroup briefly exceeds its limit before reclaim fails and the kill lands. A
+# peak slightly above the limit is the signature of a hard, fast overrun.
+#
+# NOTE: this pulls eclipse-temurin, roughly 200MB. The other samples use alpine.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-jvm-heap
+  labels:
+    app.kubernetes.io/name: oom-oracle-example
+spec:
+  restartPolicy: Never
+  containers:
+    - name: jvm
+      image: eclipse-temurin:21-jre-alpine
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      # A 1GB heap inside a 256Mi container: four times what the cgroup allows.
+      #
+      # AlwaysPreTouch makes the JVM write to every heap page during startup
+      # instead of faulting them in gradually. That turns a fault that would
+      # otherwise arrive minutes later, under production load, into one that
+      # arrives here in three seconds. The misconfiguration is identical; only
+      # the timing is compressed, which is what makes it demonstrable.
+      #
+      # `-version` is deliberate: the JVM dies before it runs any application
+      # code at all, which is the honest illustration of the point. No
+      # allocation in your program is required to hit this.
+      args:
+        - |
+          sleep 3
+          exec java -Xms1g -Xmx1g -XX:+AlwaysPreTouch -version
+      resources:
+        limits:
+          memory: 256Mi
+        requests:
+          memory: 128Mi

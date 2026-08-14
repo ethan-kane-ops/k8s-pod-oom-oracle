@@ -1,0 +1,104 @@
+# A container that survives its child being killed.
+#
+# READ THIS FIRST: whether this sample does what it says depends on your
+# container runtime, and on most Kubernetes clusters it will not.
+#
+# The kernel can kill a single process inside a cgroup, or it can kill every
+# process in that cgroup. Which one happens is set per cgroup by
+# `memory.oom.group`. containerd sets it to 1 on the container scope, so a
+# memory-limit OOM takes the whole container down. Docker and Moby leave it at
+# 0, and there the parent really does survive.
+#
+# Check before you draw a conclusion from this sample. On the node:
+#
+#   find /sys/fs/cgroup -path '*cri-containerd*' -name memory.oom.group \
+#     -exec sh -c 'echo "$(cat {}) {}"' \;
+#
+# WITH memory.oom.group=0 (Docker, older containerd):
+#
+#   The forked child is killed. PID 1 keeps running. The pod stays Running, the
+#   restart count stays at zero, and `kubectl describe pod` reports nothing at
+#   all. Verified under Docker with this exact workload:
+#
+#     status=running  exitCode=0  OOMKilled=true
+#     logs:  "Killed"
+#     alive: PID 1 sleep, PID 7 sleep, PID 8 sleep
+#
+#   This is the case the daemon exists for. Kubernetes shows you nothing; the
+#   report names the dead child and lists what is still running.
+#
+# WITH memory.oom.group=1 (containerd, the common case):
+#
+#   Every process in the container is killed, so the pod does not survive.
+#   Verified on kind with containerd v2.3.1:
+#
+#     phase=Failed  reason=OOMKilled  exit=137
+#     started 18:38:42, finished 18:38:47   (died at the instant of the kill)
+#
+#   The report still names which process the kernel chose and what it held,
+#   which `kubectl` does not, but the pod does not stay Running.
+#
+#   Note that `kubectl get pod` reads "Running" for about a second after the
+#   container is already dead, because the pod phase lags the kill. Do not use
+#   that window as evidence of survival; check
+#   `.status.containerStatuses[0].state.terminated.reason` instead.
+#
+#   kubectl apply -f examples/workloads/multi-process-survivor.yaml
+#
+# EXPECTED REPORT under containerd (abridged, from a real run):
+#
+#   source        ebpf
+#   pod           default/oom-multi-process/app
+#   victim        tail, nsPid 17, rss 510 MiB, inferred false
+#   limitBytes    536870912        (512 MiB, the limit below)
+#
+#   `inferred: false` means the kernel named this victim through the eBPF probe.
+#   The polling detector cannot do that; it infers from the largest process it
+#   last sampled and sets this to true.
+#
+#   `nsPid` is the PID as seen inside the container, which is the number that
+#   matches your application's own logs. `pid` is the host's view of the same
+#   process and appears nowhere inside the container.
+#
+#   `hogs` is unreliable here and is not worth reading under group kill: the
+#   daemon snapshots /proc at the moment of the kill, so under containerd it
+#   catches processes that are themselves dying.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-multi-process
+  labels:
+    app.kubernetes.io/name: oom-oracle-example
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: alpine:3.20
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      # Two long sleeps stand in for healthy workers. The subshell running
+      # `tail /dev/zero` is the one the kernel selects. `wait %3` blocks on that
+      # job specifically, so the script outlives the kill wherever the runtime
+      # allows it to.
+      #
+      # The limit is 512Mi rather than something smaller so the child is a clear
+      # outlier when the kernel scores processes, making the choice of victim
+      # unambiguous rather than a coin toss between siblings.
+      args:
+        - |
+          # A container can read its own cgroup, so the sample states up front
+          # which of the two behaviours below applies. Check the pod's logs:
+          # 1 means the whole container is killed, 0 means only the child is.
+          echo "memory.oom.group=$(cat /sys/fs/cgroup/memory.oom.group 2>/dev/null || echo unreadable)"
+          sleep 3600 &
+          sleep 3600 &
+          sleep 5
+          ( tail /dev/zero ) &
+          wait %3
+          echo "parent survived the child's OOM kill"
+          sleep 3600
+      resources:
+        limits:
+          memory: 512Mi
+        requests:
+          memory: 64Mi

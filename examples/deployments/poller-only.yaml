@@ -1,0 +1,65 @@
+# Poller-only: for nodes where the eBPF probe cannot load.
+#
+# Install the base first, then apply this patch:
+#
+#   kubectl apply -f deploy/
+#   kubectl -n oom-oracle patch daemonset oom-oracle \
+#     --patch-file examples/deployments/poller-only.yaml
+#
+# Confirm it took effect, rather than assuming:
+#
+#   kubectl get --raw /api/v1/namespaces/oom-oracle/pods/<pod>:9090/proxy/v1/status
+#   # {"detector":"poller", ...}
+#
+# WHEN YOU WANT THIS
+#
+# The default `--detector=auto` already tries eBPF and falls back to polling on
+# its own, so you rarely need to pin it. Pin it when you want the fallback to be
+# a decision rather than an accident: a node without BTF, a kernel below 5.8, or
+# a security policy that will not grant what bpf() needs. `auto` degrades
+# silently in all three, and silently is the problem.
+#
+# WHAT YOU GIVE UP, AND IT IS NOT SMALL
+#
+# The poller watches cgroup kill counters. It learns that a kill happened, not
+# which process the kernel chose, so it infers the victim from the largest
+# process it last sampled and sets `victim.inferred: true` to say so. When the
+# process that died was not the biggest one, that guess is simply wrong.
+#
+# It can also miss a kill outright. Between two polls a container can allocate,
+# be killed, and have its cgroup removed, leaving nothing to observe.
+#
+# This is not a theoretical gap. Running ../workloads/single-process-killed.yaml
+# against this exact configuration, on kind:
+#
+#   kubectl:  terminated reason=OOMKilled
+#   /v1/status:  {"detector":"poller","reports":0,"skipped":0}
+#   /v1/events:  []
+#
+# The container was killed and the daemon reported nothing, with no error and
+# nothing marked skipped. Every sample workload in ../workloads allocates faster
+# than the poll interval, so this is the expected outcome for a fast allocator,
+# not an unlucky one. The eBPF detector catches all of them, because the kernel
+# tells it rather than it having to be looking.
+#
+# `victim.rssBytes` becomes the last sampled value rather than the size at the
+# moment of the kill.
+#
+# Read `inferred` on every report from this deployment. It is the difference
+# between "the kernel told us" and "we guessed".
+spec:
+  template:
+    spec:
+      containers:
+        - name: oom-oracle
+          args:
+            - daemon
+            - --detector=poller
+            # A tighter interval narrows the window in which a kill can be
+            # missed entirely. It does not close it, and it costs a walk of
+            # every tracked cgroup each time round.
+            - --poll-interval=250ms
+            - --cgroup-root=/host/sys/fs/cgroup
+            - --proc-root=/host/proc
+            - --listen=:9090
+            - --log-format=json
