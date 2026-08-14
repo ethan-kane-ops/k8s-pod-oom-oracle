@@ -94,6 +94,50 @@ Kubernetes and treat the poller as the degraded mode it is.
 
 ---
 
+## 🧭 From Cgroup Path to Pod Name
+
+A cgroup path proves a pod UID, a container ID, and a QoS class. It cannot prove
+a name. Turning `pode257c815_3e31_...` into `oom-oracle-e2e/e2e-multi-process/app`
+takes the API server, which is what the pod informer is for.
+
+| | Without the informer | With it |
+|---|---|---|
+| Identity | pod UID, container ID, QoS | plus namespace, pod, container, image |
+| Needs | nothing | `pods: get,list,watch` and a node name |
+
+It is deliberately narrow:
+
+- **Scoped to one node** by the field selector `spec.nodeName=$NODE_NAME`, taken
+  from the downward API. A DaemonSet has no business watching every pod in the
+  cluster, and there is no cluster-wide fallback: a daemon that could not learn
+  its node name refuses to start the informer rather than quietly watching
+  everything.
+- **Keyed by pod UID**, because that is the only key a cgroup path offers.
+- **Container IDs include the previous one.** After an OOM kill the container
+  restarts with a new ID while the cgroup path recorded against the kill still
+  names the dead one, so `lastState.terminated.containerID` is indexed too.
+  Without it a restarted container resolves to a pod but not to a container.
+- **Deleted pods stay resolvable for five minutes.** A container killed outright
+  takes its pod with it, and under a controller the replacement arrives within
+  seconds. Dropping the entry on the delete event would lose the identity at
+  exactly the moment the tool exists to explain.
+- **Pods are trimmed before caching**, dropping managed fields and the
+  last-applied annotation, which are routinely larger than the rest of the
+  object. The daemon ships with a 128Mi limit and an OOM diagnostic that OOMs on
+  its own cache would be a poor advertisement.
+
+`--kubernetes` controls it: `auto` (default) degrades to UID-only correlation
+and logs why, `on` refuses to start without the API server, `off` never contacts
+it. Readiness is deliberately **not** gated on the cache: `/readyz` means the
+probe is attached and history is being kept, and coupling that to control plane
+availability would get a perfectly good daemon restarted. `/v1/status` reports
+`node`, `podCacheSynced` and `podsTracked` instead.
+
+The cost is client-go. It takes the stripped `linux/amd64` binary from 10.8MB to
+48.4MB, which is ordinary for Kubernetes tooling but not nothing.
+
+---
+
 ## 💻 Visual Terminal Post-Mortem
 
 Inspect incident diagnostics with a single command:

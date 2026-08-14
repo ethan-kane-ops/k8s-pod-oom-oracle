@@ -35,8 +35,45 @@ func TestDaemonIsWatchingTheNode(t *testing.T) {
 		t.Errorf("cgroupVersion = %q, want v2", got.CgroupVersion)
 	}
 
-	t.Logf("daemon: detector=%s cgroups=%s tracking=%d version=%s",
-		got.Detector, got.CgroupVersion, got.TrackedCgroups, got.Version)
+	// Cluster correlation is what turns a UID into a name. It degrades quietly
+	// by design, so the only way to know it is working is to ask.
+	if got.Node == "" {
+		t.Error("node is empty; the daemon did not learn its node name from the downward API")
+	}
+	if !got.PodCacheSynced {
+		t.Error("pod cache is not synced; reports will identify pods by UID alone")
+	}
+	if got.PodsTracked == 0 {
+		t.Error("pod cache holds no pods, yet this daemon's own pod runs on this node")
+	}
+
+	t.Logf("daemon: detector=%s cgroups=%s tracking=%d node=%s pods=%d version=%s",
+		got.Detector, got.CgroupVersion, got.TrackedCgroups, got.Node, got.PodsTracked, got.Version)
+}
+
+// assertResolved checks that a report names the workload rather than merely
+// identifying it by UID. This is the whole point of the pod informer: a
+// developer reading a post-mortem recognises "team-a/api-7d9/app", not
+// "11111111-2222-...".
+func assertResolved(t *testing.T, found report, podName, containerName string) {
+	t.Helper()
+
+	if !found.Identity.Resolved {
+		t.Error("identity is unresolved; the API server was not consulted or the pod was already gone")
+		return
+	}
+	if found.Identity.Namespace != workloadNamespace {
+		t.Errorf("namespace = %q, want %q", found.Identity.Namespace, workloadNamespace)
+	}
+	if found.Identity.PodName != podName {
+		t.Errorf("podName = %q, want %q", found.Identity.PodName, podName)
+	}
+	if found.Identity.ContainerName != containerName {
+		t.Errorf("containerName = %q, want %q", found.Identity.ContainerName, containerName)
+	}
+	if found.Identity.Image == "" {
+		t.Error("image is empty; the container was matched but carried no image")
+	}
 }
 
 // TestContainerOOMKilledOutright covers the case Kubernetes already reports:
@@ -69,9 +106,11 @@ func TestContainerOOMKilledOutright(t *testing.T) {
 	if found.Identity.QoS == "" {
 		t.Error("QoS is empty; the cgroup path was not parsed as a Kubernetes container")
 	}
+	assertResolved(t, found, name, "hog")
 
-	t.Logf("report: source=%s victim=%s pid=%d rss=%d peak=%d qos=%s",
-		found.Source, found.Victim.Comm, found.Victim.PID,
+	t.Logf("report: source=%s pod=%s/%s/%s victim=%s pid=%d rss=%d peak=%d qos=%s",
+		found.Source, found.Identity.Namespace, found.Identity.PodName,
+		found.Identity.ContainerName, found.Victim.Comm, found.Victim.PID,
 		found.Victim.RSSBytes, found.PeakBytes, found.Identity.QoS)
 }
 
@@ -118,9 +157,12 @@ func TestContainerSurvivesChildOOM(t *testing.T) {
 		t.Errorf("pod phase = %q, want Running: the container should have survived its child's death", phase)
 	}
 
-	t.Logf("report: source=%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t survivors=%d",
-		found.Source, found.Victim.Comm, found.Victim.PID, found.Victim.NSPid,
-		found.Victim.RSSBytes, found.Victim.Inferred, len(found.Hogs))
+	assertResolved(t, found, name, "app")
+
+	t.Logf("report: source=%s pod=%s/%s/%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t survivors=%d",
+		found.Source, found.Identity.Namespace, found.Identity.PodName,
+		found.Identity.ContainerName, found.Victim.Comm, found.Victim.PID,
+		found.Victim.NSPid, found.Victim.RSSBytes, found.Victim.Inferred, len(found.Hogs))
 
 	// The eBPF detector reads the victim out of the kernel, so it can state
 	// things the poller can only guess at. Only hold it to that standard.

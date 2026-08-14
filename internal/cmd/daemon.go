@@ -18,6 +18,7 @@ import (
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/correlate"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/daemon"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/detector"
+	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/k8s"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/procfs"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/sampler"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/store"
@@ -36,6 +37,9 @@ type daemonConfig struct {
 	historySize  int
 	retain       int
 	includeAll   bool
+	kubernetes   string
+	nodeName     string
+	kubeconfig   string
 	logLevel     string
 	logFormat    string
 }
@@ -45,6 +49,13 @@ const (
 	detectorAuto   = "auto"
 	detectorPoller = "poller"
 	detectorEBPF   = "ebpf"
+)
+
+// Modes accepted by --kubernetes.
+const (
+	kubernetesAuto = "auto"
+	kubernetesOn   = "on"
+	kubernetesOff  = "off"
 )
 
 func newDaemonCmd() *cobra.Command {
@@ -75,6 +86,12 @@ to read.`,
 	flags.IntVar(&cfg.historySize, "history", sampler.DefaultHistorySize, "memory samples retained per container")
 	flags.IntVar(&cfg.retain, "retain", store.DefaultCapacity, "reports retained in memory")
 	flags.BoolVar(&cfg.includeAll, "include-non-kubernetes", false, "also report kills outside the kubepods tree")
+	flags.StringVar(&cfg.kubernetes, "kubernetes", kubernetesAuto,
+		"resolve pod names via the API server: auto|on|off")
+	flags.StringVar(&cfg.nodeName, "node-name", "",
+		"node to watch pods on (defaults to the "+k8s.NodeNameEnv+" environment variable)")
+	flags.StringVar(&cfg.kubeconfig, "kubeconfig", "",
+		"kubeconfig to use instead of in-cluster credentials")
 	flags.StringVar(&cfg.logLevel, "log-level", "info", "log level: debug|info|warn|error")
 	flags.StringVar(&cfg.logFormat, "log-format", "text", "log format: text|json")
 
@@ -122,12 +139,25 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, cfg daemonConfig) error 
 
 	reports := store.NewMemory(cfg.retain)
 
+	podCache, err := buildPodCache(cfg, log)
+	if err != nil {
+		return err
+	}
+
+	// A nil *PodCache in a non-nil interface would satisfy the nil check inside
+	// the resolver and then panic on first use, so the interface is only given
+	// a value when there is one.
+	var pods correlate.PodLookup
+	if podCache != nil {
+		pods = podCache
+	}
+
 	oracle, err := daemon.New(daemon.Options{
 		Detector:             killDetector,
 		Sampler:              memorySampler,
 		Store:                reports,
 		Cgroup:               cgroupFS,
-		Resolver:             correlate.NewResolver(nil),
+		Resolver:             correlate.NewResolver(pods),
 		Proc:                 procFS,
 		IncludeNonKubernetes: cfg.includeAll,
 		Logger:               log,
@@ -141,7 +171,7 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, cfg daemonConfig) error 
 		Addr:   cfg.listenAddr,
 		Store:  reports,
 		Ready:  oracle.Ready,
-		Status: func() api.Status { return daemonStatus(oracle, cgroupFS, started) },
+		Status: func() api.Status { return daemonStatus(oracle, cgroupFS, podCache, started) },
 		Logger: log,
 	})
 	if err != nil {
@@ -153,6 +183,15 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, cfg daemonConfig) error 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error { return oracle.Run(groupCtx) })
 	group.Go(func() error { return server.ListenAndServe(groupCtx) })
+
+	if podCache != nil {
+		group.Go(func() error { return podCache.Run(groupCtx) })
+		// Waiting for the cache in the background is deliberate. Detection is
+		// this daemon's job and an unreachable API server must never delay it;
+		// the only cost of an unsynced cache is that reports name pods by UID
+		// until it catches up, which /v1/status reports.
+		go awaitPodCache(groupCtx, podCache, log)
+	}
 
 	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -198,9 +237,79 @@ func buildDetector(
 	}
 }
 
+// buildPodCache prepares cluster correlation.
+//
+// auto degrades to UID-only correlation with a logged reason, because this is a
+// node diagnostic and must keep working when the control plane does not. An
+// explicit --kubernetes=on never degrades: someone who asked for pod names
+// should be told why they are absent rather than left reading UIDs and
+// wondering.
+func buildPodCache(cfg daemonConfig, log *slog.Logger) (*k8s.PodCache, error) {
+	switch cfg.kubernetes {
+	case kubernetesOff:
+		return nil, nil
+
+	case kubernetesOn, kubernetesAuto:
+		podCache, err := newPodCache(cfg, log)
+		if err == nil {
+			log.Info("resolving pod names from the api server", "node", podCache.Node())
+			return podCache, nil
+		}
+		if cfg.kubernetes == kubernetesOn {
+			return nil, err
+		}
+		log.Info("continuing without cluster correlation",
+			"reason", err,
+			"effect", "reports identify pods by UID, not by namespace and name")
+		return nil, nil
+
+	default:
+		return nil, fmt.Errorf("unknown --kubernetes value %q: want %s, %s, or %s",
+			cfg.kubernetes, kubernetesAuto, kubernetesOn, kubernetesOff)
+	}
+}
+
+func newPodCache(cfg daemonConfig, log *slog.Logger) (*k8s.PodCache, error) {
+	node, err := k8s.NodeName(cfg.nodeName)
+	if err != nil {
+		return nil, err
+	}
+
+	restConfig, err := k8s.RestConfig(cfg.kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := k8s.NewClient(restConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return k8s.New(k8s.Options{Client: client, Node: node, Logger: log})
+}
+
+// awaitPodCache logs whether cluster correlation actually came up.
+func awaitPodCache(ctx context.Context, podCache *k8s.PodCache, log *slog.Logger) {
+	if err := podCache.WaitForSync(ctx, k8s.DefaultSyncTimeout); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		log.Warn("pod cache did not sync",
+			"error", err,
+			"effect", "reports identify pods by UID until it does")
+		return
+	}
+	log.Info("pod cache synced", "node", podCache.Node(), "pods", podCache.Len())
+}
+
 // daemonStatus snapshots the daemon for /v1/status.
-func daemonStatus(oracle *daemon.Daemon, cgroupFS *cgroup.FS, started time.Time) api.Status {
-	return api.Status{
+func daemonStatus(
+	oracle *daemon.Daemon,
+	cgroupFS *cgroup.FS,
+	podCache *k8s.PodCache,
+	started time.Time,
+) api.Status {
+	status := api.Status{
 		Detector:       oracle.Detector(),
 		CgroupVersion:  cgroupFS.Version().String(),
 		Ready:          oracle.Ready(),
@@ -210,6 +319,14 @@ func daemonStatus(oracle *daemon.Daemon, cgroupFS *cgroup.FS, started time.Time)
 		UptimeSeconds:  time.Since(started).Seconds(),
 		Version:        version.Get().Version,
 	}
+
+	if podCache != nil {
+		status.Node = podCache.Node()
+		status.PodCacheSynced = podCache.Synced()
+		status.PodsTracked = podCache.Len()
+	}
+
+	return status
 }
 
 func newEBPFDetector(
