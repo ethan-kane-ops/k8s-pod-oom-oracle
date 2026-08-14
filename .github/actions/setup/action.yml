@@ -1,0 +1,22 @@
+name: Setup
+description: Go toolchain from go.mod, module cache, and the just task runner
+
+inputs:
+  just:
+    description: Install the just task runner
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # go-version-file rather than a literal: go.mod pins the exact patch
+    # version, and it is what keeps govulncheck clear of stdlib advisories.
+    # A second version string here would drift from it silently.
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - if: inputs.just == 'true'
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4

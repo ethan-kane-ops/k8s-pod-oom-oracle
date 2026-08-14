@@ -1,0 +1,52 @@
+name: fuzz
+
+# Native Go fuzzing on the parsers that read kernel-supplied text: cgroup
+# memory files, /proc status and cmdline, and the cgroup path a kill arrives
+# as. Those formats have changed between kernel versions before, and the daemon
+# reads them from processes it does not control while they are being killed, so
+# truncated and half-written input is normal rather than exceptional.
+#
+# Weekly rather than per-PR: the corpus grows over time and a multi-minute
+# budget has no place on the PR critical path. The seed corpus still runs on
+# every PR as ordinary unit tests. Crashers land as testdata seeds.
+on:
+  schedule:
+    - cron: "43 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: Budget per target, as a Go duration
+        type: string
+        default: 120s
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: fuzz parsers
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+
+      - name: Fuzz every target
+        run: just fuzz ${{ inputs.fuzztime || '120s' }}
+
+      # A crasher is the entire point of the run, so it has to leave the
+      # machine. Without this the input that broke a parser dies with the
+      # runner and cannot be turned into a seed.
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashers
+          path: "**/testdata/fuzz/**"
+          if-no-files-found: ignore

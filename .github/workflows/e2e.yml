@@ -1,0 +1,60 @@
+name: E2E
+
+# Gated rather than run on every PR. The suite spins up a kind cluster, builds
+# and loads an image, and makes real pods exceed real limits, which is three to
+# four minutes a documentation change should not pay for.
+#
+# It still runs before anything merges that touches node behaviour: add the
+# run-e2e label to a PR, or trigger it by hand. The nightly cron is the
+# regression backstop, and catches drift in kind, containerd and the kernel
+# that no diff of ours would.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * *"
+  pull_request:
+    types: [labeled]
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e on kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-e2e'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+
+      # containerd inside the kind node opens an fsnotify watcher per CNI conf
+      # directory. Below roughly 512 instances it fails with "too many open
+      # files", the CRI plugin never loads, and kubeadm dies with an error that
+      # mentions none of that.
+      - name: Raise inotify limits
+        run: |
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+          sudo sysctl -w fs.inotify.max_user_instances=1024
+
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          config: test/e2e/kind.yaml
+          cluster_name: oom-oracle-e2e
+
+      - name: Deploy the daemon
+        run: just e2e-deploy
+
+      - name: Run the suite
+        run: go test -tags e2e -v -count=1 -timeout 20m ./test/e2e/...
+
+      - name: Daemon logs
+        if: failure()
+        run: just e2e-logs

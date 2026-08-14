@@ -1,0 +1,49 @@
+name: govulncheck
+
+# Off the PR critical path, deliberately.
+#
+# The vulnerability database updates on its own schedule, not on ours. Gating
+# PRs on it means a newly published stdlib advisory turns every open PR red
+# without a single line of code changing, which has now happened three times
+# here (ENG-118, ENG-128). Blocking a bug fix on an unrelated advisory helps
+# nobody.
+#
+# Push-to-main plus a daily cron still catches everything, on a branch where
+# the fix is a toolchain bump rather than a rebase of every open PR. This is
+# the convention cert-manager and external-secrets both use.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: govulncheck-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          just: "false"
+
+      # Pinned rather than @latest so a scan is reproducible, and installed
+      # rather than declared as a go.mod tool directive on purpose: adding
+      # x/vuln to the module graph pulls golang.org/x/net and x/text forward
+      # through MVS, which would let a scanner decide the versions that ship
+      # inside a privileged DaemonSet. Bump this line deliberately.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      - name: Scan
+        run: govulncheck -show verbose ./...
