@@ -86,6 +86,14 @@ linters:
         linters:
           - gosec
           - errcheck
+      # The copy thresholds above are sized for the sampler's per-second hot
+      # path. The e2e suite passes a decoded JSON report around a handful of
+      # times per run, so a pointer there would be churn in service of a budget
+      # that does not apply to it.
+      - path: test/e2e/.*\.go
+        text: "(hugeParam|rangeValCopy)"
+        linters:
+          - gocritic
       # bpf2go output is machine-generated and not ours to style.
       - path: internal/detector/bpf/.*_bpf.*\.go
         linters:

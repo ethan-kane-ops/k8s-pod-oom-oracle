@@ -67,6 +67,12 @@ e2e_image    := "oom-oracle:e2e"
 e2e_ns       := "oom-oracle"
 e2e_workload := "oom-oracle-e2e"
 
+e2e_base_image := "alpine:3.20"
+# The image the test workloads run. Must match workloadImage in
+# test/e2e/kube_test.go, which pins imagePullPolicy: Never so a mismatch fails
+# in seconds naming the image rather than timing out ninety seconds later.
+e2e_workload_image := "oom-oracle-workload:e2e"
+
 # Create the kind cluster used by the e2e suite
 #
 # The inotify check is not incidental. Below roughly 512 instances, containerd
@@ -76,10 +82,10 @@ e2e_workload := "oom-oracle-e2e"
 e2e-up:
     #!/usr/bin/env bash
     set -euo pipefail
-    instances=$(docker run --rm --privileged --pid=host alpine:3.20       sysctl -n fs.inotify.max_user_instances)
+    instances=$(docker run --rm --privileged --pid=host {{e2e_base_image}}       sysctl -n fs.inotify.max_user_instances)
     if [ "$instances" -lt 512 ]; then
       echo "▶ raising fs.inotify limits in the Docker VM (was $instances)"
-      docker run --rm --privileged --pid=host alpine:3.20 sh -c         'sysctl -w fs.inotify.max_user_watches=524288 >/dev/null
+      docker run --rm --privileged --pid=host {{e2e_base_image}} sh -c         'sysctl -w fs.inotify.max_user_watches=524288 >/dev/null
          sysctl -w fs.inotify.max_user_instances=1024 >/dev/null'
     fi
     if kind get clusters 2>/dev/null | grep -qx {{e2e_cluster}}; then
@@ -89,7 +95,19 @@ e2e-up:
     fi
 
 # Build the image, load it into kind, and roll out the daemon
+#
+# The workload image is preloaded so no test ever waits on a registry. The first
+# test to run would otherwise pay the pull inside its own report timeout, and a
+# slow one there is indistinguishable from the daemon missing a kill.
+#
+# It is rebuilt from the base rather than loaded directly, because a pulled
+# image is a multi-platform index whose other platforms' blobs were never
+# fetched, and `kind load` asks ctr to import --all-platforms. A local build has
+# one platform and every blob. Retagging does not help: the index travels with
+# the name.
 e2e-deploy: e2e-up
+    echo "FROM {{e2e_base_image}}" | docker build -q -t {{e2e_workload_image}} -
+    kind load docker-image {{e2e_workload_image}} --name {{e2e_cluster}}
     docker build -q -t {{e2e_image}} .
     kind load docker-image {{e2e_image}} --name {{e2e_cluster}}
     kubectl --context kind-{{e2e_cluster}} apply -f deploy/
@@ -114,16 +132,20 @@ e2e-logs:
     kubectl --context kind-{{e2e_cluster}} -n {{e2e_ns}} logs \
       -l app.kubernetes.io/name=oom-oracle --tail=200
 
-# Run linters against both target platforms.
+# Run linters against both target platforms, including build-tagged code.
 #
 # Linting only the host's GOOS is how an errorlint failure in tracer_linux.go
 # reached main: the eBPF detector sits behind "linux && (amd64 || arm64)", so a
 # run on macOS never compiles it, and a run on CI never compiles the
 # !linux fallback beside it. Neither pass alone covers this package.
+#
+# The e2e tag is the same blind spot one level up. Without it the whole of
+# test/e2e is invisible to every linter here, which is how a dead helper sat
+# there unnoticed.
 lint:
-    GOOS=linux go vet ./...
+    GOOS=linux go vet -tags e2e ./...
     GOOS=darwin go vet ./...
-    GOOS=linux golangci-lint run
+    GOOS=linux golangci-lint run --build-tags e2e
     GOOS=darwin golangci-lint run
 
 # Fuzz every parser target for the given budget each (default 60s)
