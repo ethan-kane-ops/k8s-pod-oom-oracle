@@ -1,0 +1,51 @@
+name: Feature Request
+description: Suggest a capability or new signal for oom-oracle
+title: "[FEAT]: <title>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the use case, the proposed solution, and any alternatives you have considered. Concrete beats general: what were you trying to diagnose when the tool came up short?
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: The diagnostic question you could not answer, rather than the feature you have in mind for it.
+      placeholder: e.g. I can see which process was killed, but not which of its siblings had grown fastest beforehand ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the proposed solution
+      description: "What should happen, and where it would surface: the report, the API, the CLI, or the deployment."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+      description: Including anything that already gets you partway, such as an existing field or another tool.
+
+  - type: dropdown
+    id: node-cost
+    attributes:
+      label: Does this need new access on the node?
+      description: |
+        This runs as a privileged node agent, so anything that widens its reach (new host paths, new kernel probes, broader RBAC) is weighed against what it buys. Answering honestly does not disqualify an idea.
+      options:
+        - "No: it uses signals the daemon already reads"
+        - "Yes: it needs a new host path, probe, or RBAC grant"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Diagrams, links, prior art, or sample output.

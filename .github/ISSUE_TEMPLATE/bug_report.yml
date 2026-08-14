@@ -1,0 +1,137 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in oom-oracle
+title: "[BUG]: <title>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything involving a missed, wrong, or unresolved OOM report, **the environment is the bug**. The fields below are what make a report triageable without a round trip. If you cannot collect one of them, say so rather than skipping it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what you expected instead.
+      placeholder: e.g. A container was OOMKilled but no report appeared at /v1/events ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Include the workload manifest, its memory limit, and how the process allocated.
+      placeholder: |
+        1. Apply a pod with a 128Mi limit running ...
+        2. The container allocates past the limit ...
+        3. curl the daemon's /v1/events and see ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: Daemon status
+      description: |
+        Output of `/v1/status` from the agent on the affected node. This one field answers most of what triage would otherwise have to ask for: which detector attached, the cgroup version, whether the pod cache synced, and how many cgroups are tracked.
+      placeholder: |
+        The image is distroless and has no shell, so reach the port rather than exec-ing:
+
+          kubectl -n oom-oracle port-forward <pod> 9090:9090
+          curl -s localhost:9090/v1/status
+
+        Or straight through the API server, with no background process:
+
+          kubectl get --raw /api/v1/namespaces/oom-oracle/pods/<pod>:9090/proxy/v1/status
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: startup-logs
+    attributes:
+      label: Daemon startup logs
+      description: |
+        The first few lines after start. They state which detector attached and, if eBPF did not, the reason it fell back.
+      placeholder: kubectl -n oom-oracle logs <pod> | head -20
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel version
+      description: "`uname -r`. The probe needs 5.8+ with BTF; `memory.events.local` needs 5.13+ and `memory.peak` needs 5.19+."
+      placeholder: e.g. 6.8.0-100-generic
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cgroup-version
+    attributes:
+      label: cgroup version
+      description: "`stat -fc %T /sys/fs/cgroup` prints `cgroup2fs` for v2 and `tmpfs` for v1."
+      options:
+        - v2 (cgroup2fs)
+        - v1 (tmpfs)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: btf
+    attributes:
+      label: Is BTF available on the node?
+      description: "`ls /sys/kernel/btf/vmlinux`. Without it the CO-RE probe cannot load and the daemon falls back to polling."
+      options:
+        - "Yes: /sys/kernel/btf/vmlinux exists"
+        - "No: the file is absent"
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: detector
+    attributes:
+      label: Which detector attached?
+      description: The `detector` field of `/v1/status`. A report that eBPF expects but polling produced is a different bug from one where neither did.
+      options:
+        - ebpf
+        - poller
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Container runtime and Kubernetes version
+      description: Runtime matters because it determines the cgroup path layout the daemon parses.
+      placeholder: e.g. containerd 1.7.18, Kubernetes v1.34.0, kind v0.31.0
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: oom-oracle version
+      description: "`oom-oracle version`, or the image tag you deployed."
+      placeholder: e.g. v0.1.0, or ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle@sha256:...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Report JSON, further logs, or context that does not fit above.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Search before filing
+      options:
+        - label: I have searched existing issues to ensure this bug has not already been reported.
+          required: true
