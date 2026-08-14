@@ -16,14 +16,16 @@ metadata:
   labels:
     app.kubernetes.io/name: oom-oracle
 rules:
-  # Correlation. A kill arrives as a cgroup path carrying a pod UID; resolving
-  # it to a name means listing pods and watching for changes.
+  # Correlation, and the whole of it. A kill arrives as a cgroup path carrying a
+  # pod UID; resolving it to a name means listing pods and watching for changes.
+  #
+  # The informer narrows this to one node with a spec.nodeName field selector,
+  # but RBAC cannot express that: field selectors are not authorization, so the
+  # grant is necessarily cluster-wide on pods. There is deliberately nothing
+  # else here. The node name comes from the downward API rather than a nodes
+  # read, precisely so this list stays one line long.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch"]
-  # Nodes are read to label reports with the node a kill happened on.
-  - apiGroups: [""]
-    resources: ["nodes"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

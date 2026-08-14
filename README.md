@@ -1,14 +1,24 @@
 # Kubernetes Pod OOM Oracle 🔮
 
+[![CI](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ethan-kane-ops/k8s-pod-oom-oracle)](https://goreportcard.com/report/github.com/ethan-kane-ops/k8s-pod-oom-oracle)
 [![eBPF Powered](https://img.shields.io/badge/eBPF-Kernel--level-red.svg)](https://ebpf.io)
 
-**Kubernetes Pod OOM Oracle** is an open-source, highly-differentiated low-level system daemon and command-line utility built to predict, detect, and troubleshoot Kubernetes OOM (Out Of Memory) kills. 
+A node agent that explains Kubernetes OOM kills at the level the control plane
+cannot: which process died, how much memory it held at the moment the kernel
+chose it, what the memory curve looked like on the way there, and what was still
+running afterwards.
 
-Standard Kubernetes control planes only report a generic `OOMKilled` status with exit code 137. They cannot tell you **which** process inside a multi-process container (such as Node.js web clusters, Python worker shards, or JVM garbage collection processes) exceeded the limits, or what the memory climbing curve looked like. 
+Kubernetes tells you `OOMKilled` and exit code 137. It cannot tell you which
+process inside a multi-process container exceeded the limit, and when a forked
+child is killed while the container survives it tells you nothing at all: the
+pod stays `Running`, the restart count stays at zero, and the only trace is a
+line in the kernel ring buffer on a node you probably cannot reach.
 
-OOM Oracle hooks directly into host-level Linux kernel events using **eBPF tracing** and **cgroup memory controllers** to isolate the exact process at the millisecond of death, map it back to the Kubernetes container context, and render a timeline-accurate terminal post-mortem.
+OOM Oracle attaches a kprobe to the kernel's `oom_kill_process`, samples cgroup
+memory continuously so a trajectory already exists when the kill lands, and
+resolves the cgroup path back to a namespace, pod and container name.
 
 ---
 
@@ -16,40 +26,57 @@ OOM Oracle hooks directly into host-level Linux kernel events using **eBPF traci
 
 ```mermaid
 flowchart TD
-    subgraph KernelSpace [Linux Kernel Space]
-        KProbe[kprobe oom kill process]
-        eBPFProbe[eBPF Trace Probe]
-        KProbe -->|Trigger| eBPFProbe
+    subgraph Kernel [Linux kernel]
+        KP["kprobe on oom_kill_process"]
+        BPF["eBPF program, CO-RE"]
+        KP --> BPF
     end
 
-    subgraph UserSpace [OOM Oracle Daemon]
-        RingBuf[eBPF Ring Buffer]
-        Mapper[Namespace and Proc Mapper]
-        CgroupWatcher[Cgroup memory pressure Watcher]
-        K8sClient[client go API Query]
-        DiagnosticEngine[Diagnostic TUI Assembler]
-        
-        eBPFProbe -->|Send PID namespace comm| RingBuf
-        RingBuf -->|Read Events| Mapper
-        CgroupWatcher -->|Track pressure trends| DiagnosticEngine
-        Mapper -->|Extract host PIDs and map cgroups| K8sClient
-        K8sClient -->|Resolve Pod and Container UIDs| DiagnosticEngine
+    subgraph Node [oom-oracle DaemonSet, one pod per node]
+        RB["ring buffer"]
+        DET["detector: ebpf or poller"]
+        SAM["cgroup sampler:<br/>usage, limits, PSI stall"]
+        PROC["procfs reader:<br/>victim cmdline, survivors"]
+        POD["pod informer,<br/>scoped to this node"]
+        RES["correlator:<br/>cgroup path to pod UID"]
+        ASM["report assembler"]
+        STORE["in-memory report store"]
+        API["HTTP API on :9090"]
+
+        BPF --> RB --> DET
+        DET -->|kill event| ASM
+        SAM -->|trajectory| ASM
+        PROC --> ASM
+        POD --> RES
+        RES -->|namespace, pod, container| ASM
+        ASM --> STORE --> API
     end
 
-    subgraph CLI [Developer Interface]
-        TUI[BubbleTea Interactive Terminal]
-        DiagnosticEngine -->|Render Timeline| TUI
+    subgraph Client [Client]
+        CLI["oom-oracle inspect"]
     end
+
+    API --> CLI
 ```
 
 ---
 
-## 🌟 Core Features
+## 🌟 What it does
 
-1. **Active eBPF Kernel Tracer:** Attaches probes to the kernel's `oom_kill_process` event. Extracts precise metadata (PID, host-level PID namespace, executable name `comm`, and memory bytes at death) with near-zero runtime overhead.
-2. **Cgroup Pressure Trends:** Continually parses cgroups v1 and v2 directories (`/sys/fs/cgroup/memory` or `memory.pressure`) to track memory saturation trends leading up to the crash event.
-3. **Container-to-Pod Mapper:** Reads `/proc/<pid>/cgroup` and `/proc/<pid>/ns/pid` namespaces to correlate raw host-level kernel events back to K8s container scopes and client-go pod definitions.
-4. **Timelines-Accurate Terminal Post-Mortem:** Powered by BubbleTea and Lipgloss, it generates high-fidelity, visual diagnostic reports tracing memory growth and identifying the specific victim process inside multi-process runtimes.
+1. **Traces the kill in the kernel.** A kprobe on `oom_kill_process` reports the
+   victim's PID, its PID namespace, its `comm`, and its resident memory read out
+   of the victim's own `mm` as the kernel selects it. Near-zero overhead, and no
+   dependence on the cgroup still existing afterwards.
+2. **Keeps a trajectory, not a snapshot.** Cgroup v1 and v2 memory usage, limits
+   and PSI stall are sampled continuously into a ring buffer per container, so
+   the report shows the climb rather than just the final value.
+3. **Names the process, not just the container.** `/proc` is read while the
+   victim is still dying to recover its full command line, and every surviving
+   process in the same container is listed alongside it.
+4. **Resolves cluster identity.** A node-scoped pod informer turns the pod UID
+   in a cgroup path into a namespace, pod, container and image.
+5. **Renders a terminal post-mortem.** Plain text or JSON, over an HTTP API the
+   `inspect` command reads.
 
 ---
 
@@ -138,54 +165,181 @@ The cost is client-go. It takes the stripped `linux/amd64` binary from 10.8MB to
 
 ---
 
-## 💻 Visual Terminal Post-Mortem
+## 💻 The Post-Mortem
 
-Inspect incident diagnostics with a single command:
+`oom-oracle inspect` renders what the daemon recorded:
 
 ```
-$ oom-oracle inspect pod/payment-api-6d5f78 -n default
 POD: payment-api-6d5f78 (namespace: default)
 CONTAINER: web-server (image: payment:v1.2.0)
+QOS: Burstable
 
-DIAGNOSIS: OOMKilled (2026-05-21 08:15:22 UTC)
+DIAGNOSIS: OOMKilled (2026-08-13 08:15:22 UTC)
+  Limit:        512.0MiB
+  Peak usage:   512.0MiB
+  Kill count:   1
+  Detected by:  ebpf
+  Growth rate:  1.0MiB/s (fit R²=0.97 over 1m0s)
 
-MEMORY TRAJECTORY (Last 60s):
-  08:14:22: 412MB/512MB [██████████████░░░░] 80%
-  08:14:52: 498MB/512MB [██████████████████░] 97%  (High Pressure Event)
-  08:15:22: 512MB/512MB [███████████████████] 100% (OOM Triggered)
+MEMORY TRAJECTORY (last 1m0s):
+  08:14:22:  412.0MiB / 512.0MiB  [██████████████░░░░]  80%
+  08:14:37:  460.0MiB / 512.0MiB  [████████████████░░]  90%  (stall 12%)
+  08:14:52:  498.0MiB / 512.0MiB  [█████████████████░]  97%  (stall 24%)
+  08:15:07:  507.0MiB / 512.0MiB  [█████████████████░]  99%  (stall 36%)
+  08:15:22:  512.0MiB / 512.0MiB  [██████████████████] 100%  (stall 48%)
 
-VICTIM PROCESS DETAILS:
-  PID: 28145  
-  Command: node ./dist/garbage-collector.js
-  Exit Code: 137 (OOM)
-  Memory at death: 114MB
+VICTIM PROCESS:
+  PID:             28145 (in container: 17)
+  Command:         node ./dist/garbage-collector.js
+  Exit code:       137 (OOM)
+  Memory at death: 114.0MiB
+  Confidence:      traced in the kernel at the moment of the kill.
 
-HOG PROCESSES IN CONTAINER:
-  1. node ./dist/server.js (PID 28102) - 390MB (Active)
-  2. node ./dist/garbage-collector.js (PID 28145) - 114MB (Killed)
+SURVIVING PROCESSES IN CONTAINER:
+  1. node ./dist/server.js (PID 28102) - 390.0MiB
+  2. node ./dist/worker.js (PID 28160) - 8.0MiB
 ```
+
+`stall` is the cgroup's `memory.pressure` **full** ten-second average at that
+sample: the share of time during which every task in the cgroup was stalled
+waiting on memory reclaim. It climbing ahead of the limit is the signal that a
+kill is coming.
+
+`-o json` emits the same report as a machine-readable object.
 
 ---
 
 ## 🚀 Quickstart
 
-Because OOM Oracle relies on eBPF to attach to host kernel events, the daemon must run as a privileged DaemonSet (`CAP_SYS_ADMIN` or `privileged: true`):
+> **Status.** No container image or Helm chart has been published yet. Until the
+> release pipeline lands, the supported path is to build the image and load it
+> into your cluster. See [Project status](#-project-status).
 
-1. **Add the Helm Repo:**
-   ```bash
-   helm repo add ethan-kane-ops oci://ghcr.io/ethan-kane-ops/charts
-   ```
-2. **Install the DaemonSet:**
-   ```bash
-   helm upgrade --install oom-oracle ethan-kane-ops/k8s-pod-oom-oracle \
-     --namespace oom-oracle \
-     --create-namespace \
-     --set securityContext.privileged=true
-   ```
-3. **Inspect Local Events:**
-   ```bash
-   oom-oracle daemon --watch
-   ```
+The daemon needs the host's `/sys/fs/cgroup` and `/proc` mounted read-only,
+`hostPID`, and enough privilege to load a BPF program. `deploy/` contains a
+DaemonSet configured that way.
+
+### On kind, end to end
+
+```bash
+just e2e-deploy   # create the cluster, build the image, load it, roll out the DaemonSet
+```
+
+### On any cluster
+
+```bash
+# 1. Build and push the image to a registry your nodes can reach
+docker build -t <your-registry>/oom-oracle:dev .
+docker push <your-registry>/oom-oracle:dev
+
+# 2. Point the DaemonSet at it and apply
+kubectl apply -f deploy/
+kubectl -n oom-oracle set image daemonset/oom-oracle oom-oracle=<your-registry>/oom-oracle:dev
+kubectl -n oom-oracle rollout status daemonset/oom-oracle
+```
+
+### Read the reports
+
+The Service is headless on purpose: each agent holds only its own node's
+reports, so a load-balanced VIP would answer a question about one node's pod
+from a different node's daemon. Query a specific agent.
+
+```bash
+kubectl -n oom-oracle port-forward pod/<agent-pod> 9090:9090
+oom-oracle inspect                      # every recorded kill, newest first
+oom-oracle inspect payment-api-6d5f78   # one pod
+oom-oracle inspect -n default -o json   # filtered, machine-readable
+```
+
+Confirm the agent is actually watching:
+
+```bash
+curl -s localhost:9090/v1/status | jq
+```
+
+```json
+{
+  "detector": "ebpf",
+  "cgroupVersion": "v2",
+  "ready": true,
+  "trackedCgroups": 47,
+  "node": "worker-1",
+  "podCacheSynced": true,
+  "podsTracked": 10
+}
+```
+
+`detector: "poller"` means the eBPF probe did not attach. The daemon logs the
+reason at startup.
+
+---
+
+## 🎛️ CLI
+
+### `oom-oracle daemon`
+
+Watches this node and serves the results. Intended to run as a DaemonSet.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--detector` | `auto` | `auto`, `ebpf`, or `poller`. `auto` falls back; `ebpf` fails loudly instead |
+| `--cgroup-root` | `/sys/fs/cgroup` | Path to the cgroup hierarchy |
+| `--proc-root` | `/proc` | Path to the proc filesystem |
+| `--cgroup-prefix` | `/` | Limit watching to one cgroup subtree |
+| `--listen` | `:9090` | HTTP API address |
+| `--sample-interval` | `1s` | How often memory is sampled |
+| `--poll-interval` | `500ms` | How often the poller checks for kills |
+| `--history` | `60` | Memory samples retained per container |
+| `--retain` | `256` | Reports retained in memory |
+| `--include-non-kubernetes` | `false` | Also report kills outside the `kubepods` tree |
+| `--kubernetes` | `auto` | Pod-name resolution: `auto`, `on`, `off` |
+| `--node-name` | `$NODE_NAME` | Node whose pods to watch |
+| `--kubeconfig` | in-cluster | Credentials to use instead of the in-cluster ones |
+| `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
+| `--log-format` | `text` | `text` or `json` |
+
+### `oom-oracle inspect [pod]`
+
+Renders post-mortems from a running daemon. With no argument, every recorded
+kill is listed newest first. The pod argument accepts a bare name or `pod/<name>`.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--daemon` | `http://127.0.0.1:9090` | Base URL of the daemon to query |
+| `-n`, `--namespace` | | Filter by namespace |
+| `-c`, `--container` | | Filter by container name |
+| `--limit` | all | Maximum reports to render, newest first |
+| `-o`, `--output` | `text` | `text` or `json` |
+
+### `oom-oracle version`
+
+Build metadata, as `text` or `json`.
+
+---
+
+## 🔌 HTTP API
+
+| Route | Returns |
+|---|---|
+| `GET /healthz` | `ok` once the process is up |
+| `GET /readyz` | `ready` once the detector is attached and history is being kept |
+| `GET /v1/status` | Operational snapshot: detector, cgroup version, counters, pod cache state |
+| `GET /v1/events` | All reports, newest first. Filters: `namespace`, `pod`, `container`, `limit` |
+| `GET /v1/events/{id}` | One report, or 404 |
+
+---
+
+## 🔐 What it needs, and why
+
+| Grant | Why |
+|---|---|
+| `privileged: true` | Loading a BPF program and attaching a kprobe. Without it the daemon still runs, on the poller |
+| `runAsUser: 0` | A non-root process starts with an empty effective capability set regardless of its bounding set, so `bpf()` returns `EPERM` and the daemon silently degrades |
+| `hostPID: true` | `/proc` must show the node's processes, or there is no victim to identify and no survivors to list |
+| `/sys/fs/cgroup`, `/proc` | Read-only host mounts. The daemon never writes to the node |
+| `pods: get,list,watch` | The only cluster access it has. Read-only, and only to turn a pod UID into a name |
+
+The daemon never writes to the node or to the API server.
 
 ---
 
@@ -193,25 +347,21 @@ Because OOM Oracle relies on eBPF to attach to host kernel events, the daemon mu
 
 ### Prerequisites
 
-* Go 1.26+ (pinned in `.mise.toml`)
-* Linux Kernel $\ge$ 5.8 (with BTF enabled for eBPF tracing)
-* [mise](https://mise.jdx.dev/) (Runtime manager)
-* [just](https://just.systems/) (Task executor)
+* Go 1.26.5 (pinned in `.mise.toml`)
+* [mise](https://mise.jdx.dev/) for runtimes, [just](https://just.systems/) for tasks
+* Docker, for the e2e suite and for regenerating the eBPF objects
+* A Linux kernel ≥ 5.8 with BTF, to run the eBPF detector. macOS builds and
+  tests everything except the probe itself
 
-### Get Started
+### Get started
 
-1. Install dependencies and CLI tools:
-   ```bash
-   mise install
-   ```
-2. Compile the binary locally:
-   ```bash
-   just build
-   ```
-3. Run linter and tests:
-   ```bash
-   just check # executes vet, linter checks, and unit tests
-   ```
+```bash
+mise install
+just build      # → bin/oom-oracle
+just check      # tidy + lint (both target platforms) + race tests
+```
+
+`just` with no arguments lists every target.
 
 The compiled eBPF objects in `internal/detector/bpf` are committed, so none of
 the above needs clang. After editing the BPF C, regenerate them:
@@ -222,8 +372,13 @@ just bpf-verify    # fails if the committed objects are stale (also runs in CI)
 ```
 
 This runs in Docker because Apple's clang has no BPF backend. Developing on a
-Mac otherwise works normally: the detector is unavailable there, the rest of
-the tool is not.
+Mac otherwise works normally: the detector is unavailable there, the rest of the
+tool is not.
+
+`just lint` runs four passes, `go vet` and `golangci-lint` against both
+`GOOS=linux` and `GOOS=darwin`. The eBPF detector and its non-Linux fallback sit
+behind mutually exclusive build tags, so a single-platform run always leaves one
+of them uncompiled and therefore unchecked.
 
 ### End-to-end tests
 
@@ -241,6 +396,24 @@ Every bug that has mattered in this project was found this way rather than by a
 unit test, including two in this suite's first run: the agent silently losing
 all capabilities because the distroless base runs as non-root, and every pod on
 a kubelet with its own cgroup root being classified as `Unknown` QoS.
+
+---
+
+## 📌 Project status
+
+Working today: both detectors, cgroup v1 and v2 sampling, pod-name correlation,
+the HTTP API, the text and JSON renderers, and an e2e suite that runs on kind in
+CI.
+
+Not built yet:
+
+| | Tracking |
+|---|---|
+| Interactive TUI dashboard | ENG-25 |
+| Helm chart and Artifact Hub listing | ENG-109 |
+| Published multi-arch images, signed releases | ENG-26 |
+| Documentation site | ENG-125 |
+| Prometheus metrics and Kubernetes Event emission | not yet scheduled |
 
 ---
 
