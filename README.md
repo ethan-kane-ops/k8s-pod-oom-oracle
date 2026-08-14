@@ -405,15 +405,26 @@ Working today: both detectors, cgroup v1 and v2 sampling, pod-name correlation,
 the HTTP API, the text and JSON renderers, and an e2e suite that runs on kind in
 CI.
 
-Not built yet:
+Not built yet: an interactive TUI dashboard, a Helm chart and Artifact Hub
+listing, published multi-arch signed releases, and a documentation site. No
+version has been tagged, so the HTTP API and report JSON may still change shape.
 
-| | Tracking |
+[ROADMAP.md](./ROADMAP.md) has the full picture, including the known limitations
+worth reading before you deploy this on anything you care about.
+
+---
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome.
+
+| | |
 |---|---|
-| Interactive TUI dashboard | ENG-25 |
-| Helm chart and Artifact Hub listing | ENG-109 |
-| Published multi-arch images, signed releases | ENG-26 |
-| Documentation site | ENG-125 |
-| Prometheus metrics and Kubernetes Event emission | not yet scheduled |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, task runner, and what a PR should contain |
+| [ROADMAP.md](./ROADMAP.md) | Direction, and the limitations this tool currently has |
+| [SUPPORT.md](./SUPPORT.md) | Where to ask, and what to include so it can be answered once |
+| [SECURITY.md](./SECURITY.md) | Private disclosure, and what this daemon's privileges mean on a node |
+| [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 |
 
 ---
 

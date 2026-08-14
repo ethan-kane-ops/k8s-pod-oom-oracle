@@ -3,6 +3,12 @@
 Thanks for taking the time. This document covers the development workflow,
 coding standards, and what a pull request is expected to contain.
 
+Participation is governed by the [Code of Conduct](./CODE_OF_CONDUCT.md).
+Security issues go through [private disclosure](./SECURITY.md), never a public
+issue. If you are looking for direction rather than a task, the
+[roadmap](./ROADMAP.md) lists the known limitations, which is usually the more
+useful half.
+
 ---
 
 ## Development Setup
@@ -147,15 +153,22 @@ intermediate CI failures belong nowhere in the final description.
 
 ## Reporting Bugs
 
-For anything involving a missed or wrong OOM report, the environment is the bug,
-so please include:
+For anything involving a missed or wrong OOM report, the environment is the bug.
+The [bug report template](.github/ISSUE_TEMPLATE/bug_report.yml) asks for kernel
+version, cgroup version, BTF availability, container runtime and the detector
+that attached, because a report missing those cannot be triaged without a round
+trip. It is the single source for that list; this file deliberately does not
+repeat it.
 
-- Kernel version (`uname -r`)
-- cgroup version (`stat -fc %T /sys/fs/cgroup`)
-- Whether BTF is present (`ls /sys/kernel/btf/vmlinux`)
-- Container runtime and Kubernetes version
-- The output of `curl localhost:9090/v1/status` from the affected agent
-- The daemon's startup logs, which state which detector attached and why
+Two things worth knowing before you collect it:
 
-For security vulnerabilities, do not open a public issue. Report them privately
-through this repository's GitHub Security Advisories page.
+- **The image is distroless**, so there is no shell to exec into. Reach the API
+  with `kubectl port-forward`, or straight through the API server:
+  ```bash
+  kubectl get --raw /api/v1/namespaces/oom-oracle/pods/<pod>:9090/proxy/v1/status
+  ```
+- **The startup logs are the highest-value attachment.** They state which
+  detector attached and, when eBPF did not, the reason it fell back.
+
+For security vulnerabilities, do not open a public issue. See
+[SECURITY.md](./SECURITY.md).

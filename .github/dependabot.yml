@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Every action in this repo is pinned to a commit SHA with the tag in a
+  # trailing comment. Dependabot understands that form and rewrites both, so
+  # pinning does not mean going stale.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      gomod-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+
+  # The eBPF toolchain image is pinned separately from the runtime image, and it
+  # is what `just bpf-generate` compiles in. A bump here changes the committed
+  # objects, so expect bpf-verify to fail until they are regenerated.
+  - package-ecosystem: "docker"
+    directory: "/build/bpf"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
