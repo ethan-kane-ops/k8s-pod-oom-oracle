@@ -4,7 +4,14 @@ module github.com/ethan-kane-ops/k8s-pod-oom-oracle
 // is what keeps govulncheck clear of stdlib advisories. It must never exceed
 // the Go shipped in golang:1.26, because the official images set
 // GOTOOLCHAIN=local and refuse to download a newer toolchain.
-go 1.26.5
+//
+// Check the ceiling with a forced pull, never a cached image:
+//
+//	docker pull -q golang:1.26-alpine && docker run --rm golang:1.26-alpine go version
+//
+// A stale local image reports the previous patch version and makes a safe bump
+// look unsafe.
+go 1.26.6
 
 require (
 	github.com/cilium/ebpf v0.22.0
