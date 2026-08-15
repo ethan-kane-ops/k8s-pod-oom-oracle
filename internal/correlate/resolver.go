@@ -57,14 +57,23 @@ type Identity struct {
 }
 
 // String renders the identity the way a post-mortem header reads.
+//
+// A pod-level kill is marked as such. Without it the line is identical to a
+// container kill whose name could not be looked up, and the two want opposite
+// responses: one is a shared allocation to go and find, the other is stale pod
+// metadata to ignore.
 func (i Identity) String() string {
-	if !i.Resolved {
-		return "pod " + i.PodUID + " (unresolved)"
+	name := "pod " + i.PodUID + " (unresolved)"
+	switch {
+	case i.Resolved && i.ContainerName != "":
+		name = i.Namespace + "/" + i.PodName + "/" + i.ContainerName
+	case i.Resolved:
+		name = i.Namespace + "/" + i.PodName
 	}
-	if i.ContainerName == "" {
-		return i.Namespace + "/" + i.PodName
+	if i.Kind == ScopePod {
+		name += " (pod-level)"
 	}
-	return i.Namespace + "/" + i.PodName + "/" + i.ContainerName
+	return name
 }
 
 // Resolver joins a cgroup path to a full Kubernetes identity.
@@ -80,7 +89,7 @@ func NewResolver(pods PodLookup) *Resolver {
 }
 
 // Resolve maps a cgroup path to an identity. It reports false only when the
-// path is not a Kubernetes container cgroup at all.
+// path is not inside the kubelet's pod hierarchy at all.
 func (r *Resolver) Resolve(cgroupPath string) (Identity, bool) {
 	scope, ok := ParseCgroupPath(cgroupPath)
 	if !ok {
@@ -101,7 +110,9 @@ func (r *Resolver) Resolve(cgroupPath string) (Identity, bool) {
 	identity.PodName = pod.Name
 	identity.Resolved = true
 
-	if container, found := pod.Containers[scope.ContainerID]; found {
+	// A pod scope has no container ID to look up, and must not borrow one: the
+	// whole point of the level is that the memory belonged to the pod.
+	if container, found := pod.Containers[scope.ContainerID]; found && scope.Kind == ScopeContainer {
 		identity.ContainerName = container.Name
 		identity.Image = container.Image
 	}

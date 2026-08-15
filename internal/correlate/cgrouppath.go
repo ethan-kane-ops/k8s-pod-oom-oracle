@@ -44,7 +44,25 @@ const (
 	RuntimeUnknown    Runtime = "unknown"
 )
 
-// Scope is the Kubernetes identity encoded in a container's cgroup path.
+// ScopeKind is the level of the kubelet's tree that a cgroup path names.
+//
+// The distinction matters because the kernel charges memory at both levels. A
+// container's own allocations land on its scope; anything shared between the
+// pod's containers lands on the pod slice above it, most commonly the pages of
+// a memory-backed emptyDir. A kill on the pod slice names no container, and
+// treating that as unparseable is how such kills came to be dropped entirely.
+type ScopeKind string
+
+// Levels of the kubelet's tree.
+const (
+	// ScopeContainer is one container's own cgroup.
+	ScopeContainer ScopeKind = "container"
+	// ScopePod is the slice holding every container in a pod, and everything
+	// charged to the pod rather than to one of them.
+	ScopePod ScopeKind = "pod"
+)
+
+// Scope is the Kubernetes identity encoded in a cgroup path.
 //
 // It carries only what the path itself proves. Resolving PodUID to a namespace
 // and name requires the API server, which is a separate step.
@@ -52,7 +70,10 @@ type Scope struct {
 	// PodUID is the pod's UID in canonical dashed form.
 	PodUID string `json:"podUID"`
 	// ContainerID is the runtime's container ID, without its runtime prefix.
+	// It is empty for ScopePod, which belongs to no single container.
 	ContainerID string `json:"containerID"`
+	// Kind is the level of the tree the path names.
+	Kind ScopeKind `json:"kind"`
 	// QoS is the tier encoded in the path.
 	QoS QoSClass `json:"qos"`
 	// Driver is the cgroup driver that produced the path.
@@ -77,35 +98,55 @@ var runtimePrefixes = []struct {
 
 // ParseCgroupPath extracts the Kubernetes identity from a cgroup path.
 //
-// It reports false for anything that is not a Kubernetes container cgroup:
-// system services, the kubelet's own slice, and pod-level cgroups that hold no
-// container. Callers use that to filter out host noise, which matters because
-// the daemon sees every OOM kill on the node, not only the ones in pods.
+// It reports false for anything outside the kubelet's pod hierarchy: system
+// services, the kubelet's own slice, and the QoS levels that hold no pod.
+// Callers use that to filter out host noise, which matters because the daemon
+// sees every OOM kill on the node, not only the ones in pods.
 //
-// Both kubelet cgroup drivers are handled:
+// Both kubelet cgroup drivers are handled, at both levels of the tree:
 //
 //	systemd   /kubepods.slice/kubepods-burstable.slice/
-//	          kubepods-burstable-pod<uid>.slice/cri-containerd-<id>.scope
-//	cgroupfs  /kubepods/burstable/pod<uid>/<id>
+//	          kubepods-burstable-pod<uid>.slice[/cri-containerd-<id>.scope]
+//	cgroupfs  /kubepods/burstable/pod<uid>[/<id>]
+//
+// A path ending at the pod slice yields ScopePod with no container ID. Rejecting
+// those instead is what dropped every kill charged to a pod rather than to one
+// of its containers, which is where a memory-backed emptyDir is accounted.
 //
 // Guaranteed pods omit the QoS segment under both drivers, since the kubelet
 // nests them directly beneath the kubepods root.
 func ParseCgroupPath(cgroupPath string) (Scope, bool) {
 	segments := splitPath(cgroupPath)
+	if len(segments) == 0 {
+		return Scope{}, false
+	}
+
+	scope, ok := parseContainerScope(segments)
+	if !ok {
+		scope, ok = parsePodScope(segments)
+	}
+	if !ok {
+		return Scope{}, false
+	}
+
+	scope.CgroupPath = cgroupPath
+	return scope, true
+}
+
+// parseContainerScope reads a path whose last two segments are a pod and one of
+// its containers.
+func parseContainerScope(segments []string) (Scope, bool) {
 	if len(segments) < 2 {
 		return Scope{}, false
 	}
 
 	// The container segment is always last, the pod segment second to last.
-	containerSegment := segments[len(segments)-1]
-	podSegment := segments[len(segments)-2]
-
-	podUID, driver, ok := parsePodSegment(podSegment)
+	podUID, driver, ok := parsePodSegment(segments[len(segments)-2])
 	if !ok {
 		return Scope{}, false
 	}
 
-	containerID, runtime, ok := parseContainerSegment(containerSegment, driver)
+	containerID, runtime, ok := parseContainerSegment(segments[len(segments)-1], driver)
 	if !ok {
 		return Scope{}, false
 	}
@@ -113,11 +154,60 @@ func ParseCgroupPath(cgroupPath string) (Scope, bool) {
 	return Scope{
 		PodUID:      podUID,
 		ContainerID: containerID,
+		Kind:        ScopeContainer,
 		QoS:         parseQoS(segments, driver),
 		Driver:      driver,
 		Runtime:     runtime,
-		CgroupPath:  cgroupPath,
 	}, true
+}
+
+// parsePodScope reads a path that ends at a pod slice and holds no container.
+//
+// The kubepods guard is stricter than anything the container case needs. A
+// container segment is a long hex ID that pins a path down by itself, whereas a
+// pod segment is only "pod" followed by a UID: without an ancestor naming the
+// kubelet's tree, any directory called podman or podinfo would parse as
+// somebody's pod and misattribute a host kill to it.
+func parsePodScope(segments []string) (Scope, bool) {
+	if !inKubepodsTree(segments) {
+		return Scope{}, false
+	}
+
+	podUID, driver, ok := parsePodSegment(segments[len(segments)-1])
+	if !ok {
+		return Scope{}, false
+	}
+
+	return Scope{
+		PodUID:  podUID,
+		Kind:    ScopePod,
+		QoS:     parseQoS(segments, driver),
+		Driver:  driver,
+		Runtime: RuntimeUnknown,
+	}, true
+}
+
+// InKubepodsTree reports whether a cgroup path lies inside the kubelet's pod
+// hierarchy, whether or not it parses into an identity.
+//
+// The daemon uses it to tell node noise from its own blind spots. A kill it
+// cannot parse is routine outside this tree and a lost report inside it.
+func InKubepodsTree(cgroupPath string) bool {
+	return inKubepodsTree(splitPath(cgroupPath))
+}
+
+// inKubepodsTree reports whether any segment names the kubelet's pod hierarchy.
+//
+// Containment rather than a prefix: a kubelet given its own cgroup root produces
+// "kubelet-kubepods.slice", because systemd flattens the parent slice into every
+// child's name.
+func inKubepodsTree(segments []string) bool {
+	for _, segment := range segments {
+		if strings.Contains(segment, "kubepods") {
+			return true
+		}
+	}
+	return false
 }
 
 // parsePodSegment extracts a pod UID and infers the driver that wrote it.
@@ -212,11 +302,12 @@ func parseQoS(segments []string, driver Driver) QoSClass {
 		}
 	}
 
-	// Only claim Guaranteed when the path is recognisably a kubepods tree.
-	for _, segment := range segments {
-		if strings.HasPrefix(segment, "kubepods") {
-			return QoSGuaranteed
-		}
+	// Only claim Guaranteed when the path is recognisably a kubepods tree. The
+	// containment check matters under a kubelet cgroup root, where no segment
+	// starts with "kubepods" and a prefix test reported every Guaranteed pod on
+	// such a node as Unknown.
+	if inKubepodsTree(segments) {
+		return QoSGuaranteed
 	}
 	return QoSUnknown
 }

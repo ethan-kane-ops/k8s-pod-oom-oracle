@@ -64,6 +64,9 @@ type Daemon struct {
 	processed atomic.Uint64
 	// skipped counts events discarded as non-Kubernetes.
 	skipped atomic.Uint64
+	// unattributed counts the subset of those that were inside the kubepods
+	// tree, which is this daemon failing rather than the node being noisy.
+	unattributed atomic.Uint64
 	// watching records that the detector attached successfully.
 	watching atomic.Bool
 }
@@ -139,6 +142,17 @@ func (d *Daemon) Handle(ctx context.Context, event detector.KillEvent) {
 	report, ok := d.buildReport(event)
 	if !ok {
 		d.skipped.Add(1)
+		// A kill the daemon cannot place is routine outside the kubepods tree
+		// and a defect inside it: the report someone is waiting for has just
+		// been thrown away. Only the second deserves to be seen at default log
+		// level, and only the second belongs in a counter an operator watches.
+		if correlate.InKubepodsTree(event.CgroupPath) {
+			d.unattributed.Add(1)
+			d.log.Warn("dropping an OOM kill inside the kubepods tree",
+				"cgroup", event.CgroupPath,
+				"effect", "this kill will not appear in any report")
+			return
+		}
 		d.log.Debug("skipping kill outside the kubepods tree", "cgroup", event.CgroupPath)
 		return
 	}
