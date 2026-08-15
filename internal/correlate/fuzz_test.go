@@ -25,6 +25,14 @@ func FuzzParseCgroupPath(f *testing.F) {
 		"/kubepods.slice/kubepods-burstable.slice",
 		"/kubepods.slice/kubepods-burstable-podNOTAUUID.slice/cri-containerd-abc.scope",
 		"/kubepods.slice/kubepods-burstable-pod.slice/cri-containerd-.scope",
+		// Pod-level slices, where anything charged to the pod rather than to
+		// one of its containers is accounted.
+		"/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pode257c815_3e31_4c9e_9d1a_2b3c4d5e6f70.slice",
+		"/kubepods/besteffort/pode257c815-3e31-4c9e-9d1a-2b3c4d5e6f70",
+		"/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/kubelet-kubepods-burstable-pode257c815_3e31_4c9e_9d1a_2b3c4d5e6f70.slice",
+		// Pod-shaped names that belong to the host, not to the kubelet.
+		"/machine.slice/podman",
+		"/somewhere/pode257c815-3e31-4c9e-9d1a-2b3c4d5e6f70",
 		strings.Repeat("/a", 512),
 	}
 	for _, seed := range seeds {
@@ -36,14 +44,28 @@ func FuzzParseCgroupPath(f *testing.F) {
 		if !ok {
 			return
 		}
-		// A path that claims to be a Kubernetes container must carry the two
-		// identifiers everything downstream keys on. Reporting ok with either
-		// missing would produce a report correlated to nothing.
+		// Every accepted path must name a pod, whichever level it sits at:
+		// the UID is what every report is correlated on, and reporting ok
+		// without one produces a report attached to nothing.
 		if scope.PodUID == "" {
 			t.Errorf("ParseCgroupPath(%q) reported a match with no pod UID: %+v", path, scope)
 		}
-		if scope.ContainerID == "" {
-			t.Errorf("ParseCgroupPath(%q) reported a match with no container ID: %+v", path, scope)
+
+		switch scope.Kind {
+		case ScopeContainer:
+			if scope.ContainerID == "" {
+				t.Errorf("ParseCgroupPath(%q) reported a container with no container ID: %+v", path, scope)
+			}
+		case ScopePod:
+			// A pod scope names no container by definition. Carrying an ID
+			// here would pin a shared allocation on whichever container the
+			// parser happened to reach for.
+			if scope.ContainerID != "" {
+				t.Errorf("ParseCgroupPath(%q) reported a pod scope carrying container ID %q: %+v",
+					path, scope.ContainerID, scope)
+			}
+		default:
+			t.Errorf("ParseCgroupPath(%q) reported an unknown scope kind %q: %+v", path, scope.Kind, scope)
 		}
 	})
 }

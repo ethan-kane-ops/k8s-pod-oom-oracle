@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -26,7 +28,54 @@ const (
 
 	containerCgroup = "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" +
 		podUID + ".slice/cri-containerd-" + ctrID + ".scope"
+
+	// podCgroup is the slice above it. A memory-backed emptyDir is charged
+	// here rather than to any one container, so that is where its kill lands.
+	podCgroup = "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" +
+		podUID + ".slice"
 )
+
+// logRecord is the part of a log entry these tests assert on.
+type logRecord struct {
+	level slog.Level
+	msg   string
+}
+
+// recordingHandler captures log records, so a test can assert on the level a
+// message was emitted at rather than only on the fact that it was emitted.
+type recordingHandler struct {
+	mu      sync.Mutex
+	records []logRecord
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+//nolint:gocritic // hugeParam: slog.Handler fixes this signature, so the record cannot be taken by pointer.
+func (h *recordingHandler) Handle(_ context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, logRecord{level: record.Level, msg: record.Message})
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *recordingHandler) WithGroup(string) slog.Handler { return h }
+
+// warnings returns the messages logged at warn or above, which is everything an
+// operator sees without turning the log level up.
+func (h *recordingHandler) warnings() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var msgs []string
+	for _, record := range h.records {
+		if record.level >= slog.LevelWarn {
+			msgs = append(msgs, record.msg)
+		}
+	}
+	return msgs
+}
 
 // harness wires a daemon over fixture filesystems with a controllable clock.
 type harness struct {
@@ -83,7 +132,12 @@ func newHarness(t *testing.T, lookup correlate.PodLookup) *harness {
 
 // setMemory writes a container cgroup at the given usage and limit.
 func (h *harness) setMemory(current, limit, peak uint64) {
-	key := containerCgroup[1:]
+	h.setMemoryAt(containerCgroup, current, limit, peak)
+}
+
+// setMemoryAt writes any cgroup in the tree at the given usage and limit.
+func (h *harness) setMemoryAt(cgroupPath string, current, limit, peak uint64) {
+	key := cgroupPath[1:]
 	h.cgroups[key+"/memory.current"] = &fstest.MapFile{Data: fmt.Appendf(nil, "%d\n", current)}
 	h.cgroups[key+"/memory.max"] = &fstest.MapFile{Data: fmt.Appendf(nil, "%d\n", limit)}
 	h.cgroups[key+"/memory.peak"] = &fstest.MapFile{Data: fmt.Appendf(nil, "%d\n", peak)}
@@ -299,6 +353,105 @@ func TestHandleIncludesNonKubernetesWhenAsked(t *testing.T) {
 
 // TestHandleWithoutHistory covers a container that appeared and died inside a
 // single sample window: the kill is still reported, just without a trajectory.
+// TestHandleReportsPodLevelKill is the regression test for kills charged to the
+// pod rather than to one of its containers, which the daemon used to drop.
+//
+// A memory-backed emptyDir accounts its pages to the pod slice, so a pod that
+// fills /dev/shm is killed there. Kubernetes marks the pod OOMKilled and the
+// daemon reported nothing at all, which is a false negative in the one job it
+// has.
+func TestHandleReportsPodLevelKill(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, testLookup())
+
+	// The limit that was hit belongs to the pod slice, not to a container.
+	h.setMemoryAt(podCgroup, 256<<20, 256<<20, 256<<20)
+
+	event := killEvent()
+	event.CgroupPath = podCgroup
+	h.daemon.Handle(t.Context(), event)
+
+	if got := h.daemon.Processed(); got != 1 {
+		t.Fatalf("Processed() = %d, want 1; a pod-level kill must still be reported", got)
+	}
+
+	report := h.latest(t)
+	if report.Identity.Kind != correlate.ScopePod {
+		t.Errorf("Kind = %q, want %q", report.Identity.Kind, correlate.ScopePod)
+	}
+	if report.Identity.PodName != "payment-api-6d5f78" {
+		t.Errorf("PodName = %q, want the pod still identified", report.Identity.PodName)
+	}
+	// Naming a container here would send the reader after the wrong process:
+	// the memory was shared, and no single container owned it.
+	if report.Identity.ContainerName != "" {
+		t.Errorf("ContainerName = %q, want empty for a pod-level kill", report.Identity.ContainerName)
+	}
+	if want := uint64(256 << 20); report.LimitBytes != want {
+		t.Errorf("LimitBytes = %d, want the pod slice's %d", report.LimitBytes, want)
+	}
+}
+
+// TestHandleWarnsOnlyForKillsItShouldHavePlaced covers the daemon's own blind
+// spot. An unplaceable kill is routine out on the host, where the probes see
+// every service on the node, and a defect inside the kubepods tree: something
+// in a pod died and nobody will be told. Logging both at debug is what let the
+// pod-level case go unnoticed for as long as it did.
+func TestHandleWarnsOnlyForKillsItShouldHavePlaced(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		cgroupPath   string
+		wantWarnings int
+	}{
+		{
+			name:       "host service is routine",
+			cgroupPath: "/system.slice/docker.service",
+		},
+		{
+			// Inside the tree, and still unparseable: a runtime whose cgroup
+			// prefix the parser does not know.
+			name: "unparseable inside the kubepods tree is a lost report",
+			cgroupPath: "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" +
+				podUID + ".slice/mystery-" + ctrID + ".scope",
+			wantWarnings: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, testLookup())
+			handler := &recordingHandler{}
+			d, err := New(Options{
+				Detector: detector.NewFake(), Sampler: h.sampler, Store: h.store,
+				Resolver: correlate.NewResolver(testLookup()),
+				Logger:   slog.New(handler),
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			event := killEvent()
+			event.CgroupPath = tt.cgroupPath
+			d.Handle(t.Context(), event)
+
+			if got := d.Processed(); got != 0 {
+				t.Errorf("Processed() = %d, want 0 for an unplaceable kill", got)
+			}
+			if got := d.Skipped(); got != 1 {
+				t.Errorf("Skipped() = %d, want 1", got)
+			}
+			if got := handler.warnings(); len(got) != tt.wantWarnings {
+				t.Errorf("warnings = %d %q, want %d", len(got), got, tt.wantWarnings)
+			}
+		})
+	}
+}
+
 func TestHandleWithoutHistory(t *testing.T) {
 	t.Parallel()
 

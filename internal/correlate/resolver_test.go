@@ -9,6 +9,11 @@ import (
 const systemdContainerPath = "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" +
 	podUIDEscape + ".slice/cri-containerd-" + containerID + ".scope"
 
+// systemdPodPath is the slice one level above, which is where a memory-backed
+// emptyDir is charged and therefore where such a kill lands.
+const systemdPodPath = "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" +
+	podUIDEscape + ".slice"
+
 func testLookup() MapPodLookup {
 	return MapPodLookup{
 		podUID: {
@@ -123,6 +128,55 @@ func TestResolveUnknownContainerInKnownPod(t *testing.T) {
 	}
 }
 
+// TestResolvePodScope covers a kill on the pod slice. The pod resolves to a
+// namespace and name like any other, but no container is named, because the
+// memory was never charged to one.
+func TestResolvePodScope(t *testing.T) {
+	t.Parallel()
+
+	got, ok := NewResolver(testLookup()).Resolve(systemdPodPath)
+	if !ok {
+		t.Fatal("Resolve() rejected a pod-level cgroup path")
+	}
+	if got.Kind != ScopePod {
+		t.Errorf("Kind = %q, want %q", got.Kind, ScopePod)
+	}
+	if !got.Resolved {
+		t.Error("Resolved = false; the pod itself was found and should be reported")
+	}
+	if got.PodName != "payment-api-6d5f78" || got.Namespace != "default" {
+		t.Errorf("pod = %s/%s, want default/payment-api-6d5f78", got.Namespace, got.PodName)
+	}
+	if got.ContainerID != "" {
+		t.Errorf("ContainerID = %q, want empty for a pod-level kill", got.ContainerID)
+	}
+	if got.ContainerName != "" || got.Image != "" {
+		t.Errorf("container = %q (%q), want neither named for a pod-level kill", got.ContainerName, got.Image)
+	}
+}
+
+// TestResolvePodScopeDoesNotBorrowAContainer pins the guard that keeps a
+// pod-level kill from picking up a container's name.
+//
+// A pod scope carries no container ID, so the lookup is keyed on "". Any
+// PodLookup that indexes a container under an empty ID would otherwise hand its
+// name to every pod-level kill in that pod, which reads as a specific container
+// having died when the truth is that the pod's shared memory filled up.
+func TestResolvePodScopeDoesNotBorrowAContainer(t *testing.T) {
+	t.Parallel()
+
+	lookup := testLookup()
+	lookup[podUID].Containers[""] = ContainerInfo{Name: "not-yet-started", Image: "payment:v1.2.0"}
+
+	got, ok := NewResolver(lookup).Resolve(systemdPodPath)
+	if !ok {
+		t.Fatal("Resolve() rejected a pod-level cgroup path")
+	}
+	if got.ContainerName != "" {
+		t.Errorf("ContainerName = %q, want empty; a pod-level kill must not borrow a container", got.ContainerName)
+	}
+}
+
 func TestResolveProcess(t *testing.T) {
 	t.Parallel()
 
@@ -209,6 +263,23 @@ func TestIdentityString(t *testing.T) {
 			name:     "unresolved falls back to the uid",
 			identity: Identity{Scope: Scope{PodUID: podUID}},
 			want:     "pod " + podUID + " (unresolved)",
+		},
+		{
+			// Without the marker this line is identical to the case above it,
+			// and the two call for opposite responses: a shared allocation to
+			// go and find, versus a container whose name could not be looked
+			// up. The reader cannot tell them apart from the pod name alone.
+			name: "pod level kill is marked as such",
+			identity: Identity{
+				Scope:     Scope{PodUID: podUID, Kind: ScopePod},
+				Namespace: "default", PodName: "payment-api", Resolved: true,
+			},
+			want: "default/payment-api (pod-level)",
+		},
+		{
+			name:     "unresolved pod level kill keeps both markers",
+			identity: Identity{Scope: Scope{PodUID: podUID, Kind: ScopePod}},
+			want:     "pod " + podUID + " (unresolved) (pod-level)",
 		},
 	}
 
