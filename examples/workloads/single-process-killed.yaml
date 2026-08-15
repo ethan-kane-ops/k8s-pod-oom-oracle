@@ -1,0 +1,71 @@
+# Single process killed outright.
+#
+# One process allocates past the container's limit, so the kernel kills it and
+# the container dies with it. This is the case Kubernetes already reports: the
+# pod enters OOMKilled and `kubectl describe` says so.
+#
+# The sample exists to show what gets added on top of that. Kubernetes tells you
+# the container died. It does not tell you which process died, how much memory
+# it held at the moment it was killed, or what the climb to the limit looked
+# like. Those are the fields to read in the report below.
+#
+#   kubectl apply -f examples/workloads/single-process-killed.yaml
+#
+# The kill lands a few seconds later. Then, against the daemon on that node:
+#
+#   kubectl get --raw /api/v1/namespaces/oom-oracle/pods/<daemon-pod>:9090/proxy/v1/events
+#
+# EXPECTED REPORT (abridged, from a real run on kind):
+#
+#   source        ebpf
+#   pod           default/oom-single-process/hog
+#   victim        tail, nsPid 15, rss 127 MiB, inferred false
+#   limitBytes    134217728        (128 MiB, the limit below)
+#   peakBytes     134217728        (128 MiB: it died at the limit, not near it)
+#   trajectory    3 samples, all 2 MiB
+#
+# Read `peakBytes` against `trajectory` and you have the single most useful
+# thing this sample teaches. Every sample says 2 MiB. The peak says 128 MiB.
+#
+# They disagree because they come from different places. The trajectory is what
+# the sampler saw once per second; `tail /dev/zero` went from 2 MiB to the limit
+# in well under one interval, so no sample ever caught it climbing. The peak is
+# read from the kernel's own `memory.peak`, which records the high-water mark
+# whether or not anyone was looking.
+#
+# So a flat trajectory does not mean the container was idle. For an allocation
+# faster than the sample interval, the peak is the only honest number, and it is
+# why the report carries both.
+#
+# `victim.cmdline` was null in this run, which is the common outcome. Recovering
+# it means reading /proc while the process is being killed, and that race is
+# usually lost. Identify the victim by `comm` and `nsPid` instead.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-single-process
+  labels:
+    app.kubernetes.io/name: oom-oracle-example
+spec:
+  # Never, so the pod stays Failed for inspection instead of restarting into a
+  # fresh OOM every few seconds.
+  restartPolicy: Never
+  containers:
+    - name: hog
+      image: alpine:3.20
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      # `tail /dev/zero` reads an infinite stream of zero bytes into memory. The
+      # leading sleep gives the sampler a couple of baseline readings before the
+      # allocation starts. It does not produce a visible climb: the allocation
+      # itself is far faster than the one-second sample interval. See the note
+      # on peak versus trajectory above.
+      args:
+        - |
+          sleep 3
+          tail /dev/zero
+      resources:
+        limits:
+          memory: 128Mi
+        requests:
+          memory: 64Mi

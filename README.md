@@ -10,11 +10,21 @@ cannot: which process died, how much memory it held at the moment the kernel
 chose it, what the memory curve looked like on the way there, and what was still
 running afterwards.
 
-Kubernetes tells you `OOMKilled` and exit code 137. It cannot tell you which
-process inside a multi-process container exceeded the limit, and when a forked
-child is killed while the container survives it tells you nothing at all: the
-pod stays `Running`, the restart count stays at zero, and the only trace is a
-line in the kernel ring buffer on a node you probably cannot reach.
+Kubernetes tells you `OOMKilled` and exit code 137, and then stops. It cannot
+tell you which of the five processes in that container took the memory, what it
+held at the moment the kernel picked it, or whether usage climbed for an hour or
+spiked in a second. On a pool of workers that all exec the same binary, "which
+one" is the entire question, and the answer is on the node, in a kernel ring
+buffer you probably cannot reach.
+
+There is a harder case that depends on your runtime. `memory.oom.group` decides
+whether the kernel kills one process or the whole container. containerd sets it
+to 1, so the container dies and at least something is reported. Docker and Moby
+leave it at 0, and there a forked child can be killed while the container keeps
+running: the pod stays `Running`, the restart count stays at zero, and
+Kubernetes reports nothing whatsoever.
+[`examples/workloads/multi-process-survivor.yaml`](examples/workloads/multi-process-survivor.yaml)
+demonstrates both and shows how to tell which you are on.
 
 OOM Oracle attaches a kprobe to the kernel's `oom_kill_process`, samples cgroup
 memory continuously so a trajectory already exists when the kill lands, and
@@ -68,11 +78,14 @@ flowchart TD
    of the victim's own `mm` as the kernel selects it. Near-zero overhead, and no
    dependence on the cgroup still existing afterwards.
 2. **Keeps a trajectory, not a snapshot.** Cgroup v1 and v2 memory usage, limits
-   and PSI stall are sampled continuously into a ring buffer per container, so
-   the report shows the climb rather than just the final value.
-3. **Names the process, not just the container.** `/proc` is read while the
-   victim is still dying to recover its full command line, and every surviving
-   process in the same container is listed alongside it.
+   and PSI stall are sampled continuously into a ring buffer per container, so a
+   slow leak arrives with its climb already recorded. An allocation faster than
+   the sample interval will not show a climb, and `peakBytes` is read from the
+   kernel's `memory.peak` precisely so that case still has an honest number.
+3. **Names the process, not just the container.** The victim's `comm` and its
+   container-local `nsPid` come from the kernel. `/proc` is also read while the
+   victim is dying to recover its full command line and its siblings, though
+   that race is often lost and those fields can be absent.
 4. **Resolves cluster identity.** A node-scoped pod informer turns the pod UID
    in a cgroup path into a namespace, pod, container and image.
 5. **Renders a terminal post-mortem.** Plain text or JSON, over an HTTP API the

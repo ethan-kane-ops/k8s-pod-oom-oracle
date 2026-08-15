@@ -29,6 +29,10 @@ const (
 	workloadNamespace = "oom-oracle-e2e"
 	// apiPort must match the containerPort in deploy/daemonset.yaml.
 	apiPort = 9090
+	// exampleImage is the registry image the published samples name, so that a
+	// reader can apply them with no local build. The suite rewrites it to
+	// workloadImage; see example() in oom_test.go.
+	exampleImage = "alpine:3.20"
 	// workloadImage is what every test pod runs. It must match
 	// e2e_workload_image in the justfile, which builds it and loads it into the
 	// kind node before the suite starts.
@@ -202,6 +206,41 @@ func eventuallyDiag(t *testing.T, timeout time.Duration, what string, check func
 		t.Fatalf("timed out after %s waiting for %s: %v; %s", timeout, what, last, diagnose())
 	}
 	t.Fatalf("timed out after %s waiting for %s: %v", timeout, what, last)
+}
+
+// consistently fails if check stops holding at any point within the window.
+//
+// The mirror of eventually, for asserting that nothing happens. Sampling once
+// cannot distinguish "it survived" from "it has not died yet", and that
+// distinction is the whole content of the assertion.
+func consistently(t *testing.T, window time.Duration, what string, check func() error) {
+	t.Helper()
+
+	deadline := time.Now().Add(window)
+	for time.Now().Before(deadline) {
+		if err := check(); err != nil {
+			t.Fatalf("waiting for %s: %v", what, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// terminatedReason returns the pod's first container's termination reason, or ""
+// while it is still running.
+//
+// Prefer this over `.status.phase`. The phase still reads "Running" for about a
+// second after a container is dead, whereas the terminated reason is populated
+// first, so a test keyed on phase can assert survival for a container that has
+// already been killed.
+func terminatedReason(t *testing.T, name string) string {
+	t.Helper()
+
+	out, err := runKubectl("get", "pod", name, "-n", workloadNamespace,
+		"-o", "jsonpath={.status.containerStatuses[0].state.terminated.reason}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // errTerminal marks a condition that polling cannot resolve, so eventuallyDiag

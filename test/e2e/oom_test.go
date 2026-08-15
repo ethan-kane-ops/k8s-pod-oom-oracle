@@ -4,6 +4,9 @@ package e2e
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,12 +87,12 @@ func assertResolved(t *testing.T, found report, podName, containerName string) {
 // The daemon should still add what Kubernetes does not, which is the memory
 // trajectory and the identity of the process.
 func TestContainerOOMKilledOutright(t *testing.T) {
-	const name = "e2e-single-process"
+	const name = "oom-single-process"
 	daemon := daemonPod(t)
 	before := len(daemonReports(t, daemon))
 
 	t.Cleanup(func() { deletePod(t, name) })
-	applyPod(t, singleProcessManifest(name))
+	applyPod(t, example(t, "single-process-killed.yaml"))
 
 	uid := waitForPodUID(t, name)
 	waitForPodStarted(t, name)
@@ -118,18 +121,25 @@ func TestContainerOOMKilledOutright(t *testing.T) {
 		found.Victim.RSSBytes, found.PeakBytes, found.Identity.QoS)
 }
 
-// TestContainerSurvivesChildOOM is the case that justifies the project.
+// TestMultiProcessContainerNamesTheVictim covers a container with several
+// processes where one takes all the memory.
 //
-// A forked child is killed while the container's main process keeps running, so
-// the pod never enters OOMKilled and kubectl reports nothing at all. The daemon
-// must name the dead child and list the survivors.
-func TestContainerSurvivesChildOOM(t *testing.T) {
-	const name = "e2e-multi-process"
+// This test used to assert that the container survived, which is what happens
+// when memory.oom.group is 0. containerd sets it to 1, so the kernel kills every
+// process in the cgroup and the container dies. The old assertion read
+// `.status.phase` immediately after the report arrived and saw "Running" because
+// the pod phase lags the kill by about a second; it passed while asserting
+// something untrue.
+//
+// What holds on every runtime is that the daemon names which process the kernel
+// chose, and that Kubernetes does not.
+func TestMultiProcessContainerNamesTheVictim(t *testing.T) {
+	const name = "oom-multi-process"
 	daemon := daemonPod(t)
 	before := len(daemonReports(t, daemon))
 
 	t.Cleanup(func() { deletePod(t, name) })
-	applyPod(t, multiProcessManifest(name))
+	applyPod(t, example(t, "multi-process-survivor.yaml"))
 
 	uid := waitForPodUID(t, name)
 	waitForPodStarted(t, name)
@@ -144,23 +154,42 @@ func TestContainerSurvivesChildOOM(t *testing.T) {
 	if found.Victim.NSPid == 0 {
 		t.Error("NSPid is 0; the container-local PID is the one a developer recognises")
 	}
-	// The whole point: the container is still up. Its other processes must
-	// appear as survivors, and the victim must not.
-	if len(found.Hogs) == 0 {
-		t.Error("no surviving processes listed; the container should still be running")
-	}
-	for _, hog := range found.Hogs {
-		if hog.PID == found.Victim.PID {
-			t.Errorf("victim pid %d listed as a survivor", hog.PID)
-		}
-	}
+	// Hogs is deliberately not asserted. Under group kill the daemon snapshots
+	// /proc at the moment of the kill and catches processes that are themselves
+	// dying, so its contents are a race rather than a fact. Asserting on it
+	// would encode that race as a requirement.
 
-	// Kubernetes itself saw nothing. Assert that, because it is the claim the
-	// whole tool rests on.
-	phase := kubectl(t, "get", "pod", name, "-n", workloadNamespace, "-o", "jsonpath={.status.phase}")
-	if phase != "Running" {
-		t.Errorf("pod phase = %q, want Running: the container should have survived its child's death", phase)
+	// The runtime's own setting is what decides whether the container could have
+	// survived, so read it rather than inferring it from pod phase, which lags
+	// the kill by about a second and reports "Running" for a container that is
+	// already dead.
+	// Both branches poll rather than sample once. Pod status trails the kill by
+	// roughly a second, which is exactly the trap the old assertion fell into.
+	groupKill := containerGroupKill(t, name)
+	switch groupKill {
+	case "1":
+		// Every process in the cgroup is killed, so the container must die.
+		eventually(t, 30*time.Second, "the container to be reported OOMKilled", func() error {
+			if reason := terminatedReason(t, name); reason != "OOMKilled" {
+				return fmt.Errorf("terminated reason = %q", reason)
+			}
+			return nil
+		})
+	case "0":
+		// Only the victim is killed, so the container stays up and Kubernetes
+		// reports nothing at all. This is the case the project exists for, and
+		// the one the old assertion claimed to be testing everywhere.
+		consistently(t, 10*time.Second, "the container to stay running", func() error {
+			if reason := terminatedReason(t, name); reason != "" {
+				return fmt.Errorf("terminated reason = %q, want none", reason)
+			}
+			return nil
+		})
+	default:
+		t.Errorf("memory.oom.group = %q, want 0 or 1: the sample prints it at startup, "+
+			"so an empty value means the workload or the log read is broken", groupKill)
 	}
+	t.Logf("runtime: memory.oom.group=%s terminated=%q", groupKill, terminatedReason(t, name))
 
 	assertResolved(t, found, name, "app")
 
@@ -235,62 +264,61 @@ func waitForReport(t *testing.T, daemon, podName string, before int, uid string)
 	return found
 }
 
-// singleProcessManifest is one process that allocates past its limit, so the
-// container itself is killed.
-func singleProcessManifest(name string) string {
-	return fmt.Sprintf(`
-apiVersion: v1
-kind: Pod
-metadata:
-  name: %s
-spec:
-  restartPolicy: Never
-  containers:
-    - name: hog
-      image: %s
-      imagePullPolicy: Never
-      command: ["sh", "-c"]
-      # Climbs in steps so the sampler records a trajectory rather than a single
-      # jump from idle to dead.
-      args:
-        - |
-          sleep 3
-          tail /dev/zero
-      resources:
-        limits:
-          memory: 128Mi
-        requests:
-          memory: 64Mi
-`, name, workloadImage)
+// containerGroupKill reports the pod's container-scope memory.oom.group, as "0",
+// "1", or "" when it cannot be read.
+//
+// This is the setting that decides whether an OOM kills one process or the whole
+// container, so it is the difference between two completely different expected
+// outcomes. It is read from the node rather than assumed, because it varies by
+// runtime: containerd sets 1, Docker leaves 0.
+//
+// The workload prints it at startup, which is cheaper and more honest than
+// inspecting the node: a container can read its own cgroup, so the value comes
+// from the very cgroup the kill will be charged to. Reading it from the node
+// would mean a debug pod and another image to pull.
+func containerGroupKill(t *testing.T, podName string) string {
+	t.Helper()
+
+	const prefix = "memory.oom.group="
+
+	logs, err := runKubectl("logs", podName, "-n", workloadNamespace)
+	if err != nil {
+		t.Logf("reading %s logs for %s: %v", podName, prefix, err)
+		return ""
+	}
+	for line := range strings.SplitSeq(logs, "\n") {
+		if after, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			return after
+		}
+	}
+	return ""
 }
 
-// multiProcessManifest keeps PID 1 alive while a child is killed. The pod stays
-// Running throughout, which is precisely why Kubernetes reports nothing.
-func multiProcessManifest(name string) string {
-	return fmt.Sprintf(`
-apiVersion: v1
-kind: Pod
-metadata:
-  name: %s
-spec:
-  restartPolicy: Never
-  containers:
-    - name: app
-      image: %s
-      imagePullPolicy: Never
-      command: ["sh", "-c"]
-      args:
-        - |
-          sleep 3600 &
-          sleep 3600 &
-          sleep 5
-          ( tail /dev/zero ) &
-          wait %%3
-          sleep 3600
-      resources:
-        limits:
-          memory: 512Mi
-        requests:
-          memory: 64Mi
-`, name, workloadImage)
+// example loads a workload manifest from examples/workloads.
+//
+// The suite runs the published samples rather than its own copies of them. A
+// sample that stops producing the report its header describes is a documentation
+// bug, and this is what turns that into a test failure. It also means the two
+// cannot drift, which they did as separate strings.
+//
+// The image is the one thing rewritten. Samples name a registry image so that
+// `kubectl apply -f` works for a reader with no local build; the suite swaps in
+// the tag preloaded into the kind node so no test waits on a registry. Nothing
+// else is touched: the command, the limits and the container name are exactly
+// what a reader would apply.
+func example(t *testing.T, file string) string {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "examples", "workloads", file)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading example %s: %v", file, err)
+	}
+
+	manifest := string(raw)
+	if !strings.Contains(manifest, exampleImage) {
+		t.Fatalf("example %s does not use %s, so the suite cannot preload its image",
+			file, exampleImage)
+	}
+	return strings.ReplaceAll(manifest, exampleImage, workloadImage)
 }

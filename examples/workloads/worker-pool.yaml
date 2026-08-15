@@ -1,0 +1,60 @@
+# A worker pool where one worker is the memory hog.
+#
+# The shape most real services have: a supervisor and N workers. Node.js
+# `cluster`, Python `gunicorn`, Ruby `puma` and PHP-FPM all look like this.
+#
+# On containerd the whole container dies (see multi-process-survivor.yaml for
+# why), so Kubernetes does tell you something: `OOMKilled`, exit 137. What it
+# cannot tell you is *which of the five processes* took the memory. That is the
+# only question worth asking when a pool dies, and it is the one this sample
+# answers.
+#
+#   kubectl apply -f examples/workloads/worker-pool.yaml
+#
+# EXPECTED REPORT (abridged, from a real run on kind):
+#
+#   source        ebpf
+#   pod           default/oom-worker-pool/pool
+#   victim        tail, nsPid 18, rss 255 MiB, inferred false
+#   limitBytes    268435456        (256 MiB, the limit below)
+#   peakBytes     268435456
+#
+# `nsPid 18` is the number to carry back to your application logs: it is the PID
+# your supervisor saw for that worker. The host `pid` in the same report is a
+# different namespace's view and matches nothing inside the container.
+#
+# ON NAMING YOUR WORKERS: the kernel records only `comm`, the first 15
+# characters of the executable name. A pool of five processes all exec'ing
+# `node` produces five identical `comm` values, and the report can then only
+# separate them by `nsPid` and resident size. `cmdline` would disambiguate them
+# but it is read from /proc while the victim is dying, and that race is usually
+# lost; it was null in the run above. If you control how workers are spawned,
+# giving each a distinct executable name is what makes these reports readable.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-worker-pool
+  labels:
+    app.kubernetes.io/name: oom-oracle-example
+spec:
+  restartPolicy: Never
+  containers:
+    - name: pool
+      image: alpine:3.20
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      # Three idle workers and one that allocates without bound. The idle ones
+      # exist so the report has to choose, which is the point: the kernel scores
+      # every process in the cgroup and the report tells you which it picked.
+      args:
+        - |
+          sleep 3600 &
+          sleep 3600 &
+          sleep 3600 &
+          sleep 5
+          tail /dev/zero
+      resources:
+        limits:
+          memory: 256Mi
+        requests:
+          memory: 64Mi

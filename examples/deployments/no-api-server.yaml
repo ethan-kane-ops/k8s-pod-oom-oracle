@@ -1,0 +1,78 @@
+# No API server access: the daemon never contacts Kubernetes.
+#
+# Install the base, apply this patch, then remove the cluster grant:
+#
+#   kubectl apply -f deploy/
+#   kubectl -n oom-oracle patch daemonset oom-oracle \
+#     --patch-file examples/deployments/no-api-server.yaml
+#   kubectl delete clusterrolebinding oom-oracle
+#   kubectl delete clusterrole oom-oracle
+#
+# Deleting the ClusterRole is the point of the exercise. A deployment that keeps
+# the grant "just in case" has reduced nothing; it has only stopped using it.
+# Keep the ServiceAccount, which the pod spec still references.
+#
+# Confirm:
+#
+#   kubectl get --raw /api/v1/namespaces/oom-oracle/pods/<pod>:9090/proxy/v1/status
+#   # {"podCacheSynced":false,"podsTracked":0, ...}
+#
+# WHEN YOU WANT THIS
+#
+# For clusters where a node agent may not read pods cluster-wide. That grant is
+# the daemon's only cluster access, and it is genuinely cluster-wide: a field
+# selector scopes the *watch* to one node, but RBAC cannot express "pods on my
+# own node", so the ClusterRole has to allow pods everywhere. Some environments
+# will not accept that, and this is the answer for them.
+#
+# WHAT YOU GIVE UP
+#
+# Reports carry the pod UID from the cgroup path and nothing else.
+# `identity.resolved` is false, and namespace, podName, containerName and image
+# are empty:
+#
+#   "identity": {
+#     "podUID": "b17c0fcb-e1cc-42d5-9891-2372a6d32c69",
+#     "containerID": "94b0bb5d47551d31d66d72357a078d939b093b74cb888cbde321f70589caab06",
+#     "qos": "Burstable",
+#     "driver": "systemd",
+#     "runtime": "containerd",
+#     "cgroupPath": "/kubelet.slice/.../cri-containerd-94b0bb5d....scope",
+#     "namespace": "",
+#     "podName": "",
+#     "containerName": "",
+#     "image": "",
+#     "resolved": false
+#   }
+#
+# `/v1/status` also drops its `node` field and reports
+# `"podCacheSynced":false,"podsTracked":0`, which is how you confirm the
+# informer really is off rather than merely failing quietly.
+#
+# Nothing else changes. The victim, its nsPid, the resident size at kill time,
+# the peak, the limit and the trajectory all come from the kernel and the cgroup
+# filesystem, none of which involve the API server.
+#
+# Map a UID back by hand when you need to:
+#
+#   kubectl get pods -A -o json | jq -r \
+#     '.items[] | select(.metadata.uid=="<podUID>") | .metadata.namespace+"/"+.metadata.name'
+#
+# `--kubernetes=off` is set explicitly rather than left to the absence of a
+# token. The default `auto` would try, fail, and warn on every start; being told
+# not to try is quieter, and puts the decision on the record.
+spec:
+  template:
+    spec:
+      # Nothing to authenticate against, so do not project a token into the pod.
+      automountServiceAccountToken: false
+      containers:
+        - name: oom-oracle
+          args:
+            - daemon
+            - --detector=auto
+            - --kubernetes=off
+            - --cgroup-root=/host/sys/fs/cgroup
+            - --proc-root=/host/proc
+            - --listen=:9090
+            - --log-format=json
