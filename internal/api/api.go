@@ -39,6 +39,11 @@ type Status struct {
 	Reports uint64 `json:"reports"`
 	// Skipped counts kills discarded as belonging to no Kubernetes container.
 	Skipped uint64 `json:"skipped"`
+	// Unattributed counts the subset of Skipped that came from inside the
+	// kubepods tree. Skipped is expected to climb on any busy node; this
+	// climbing means Kubernetes OOM kills went unreported, so it is the one to
+	// alert on.
+	Unattributed uint64 `json:"unattributed"`
 	// TrackedCgroups is how many containers currently have sampled history.
 	TrackedCgroups int `json:"trackedCgroups"`
 	// UptimeSeconds is how long the daemon has been running.

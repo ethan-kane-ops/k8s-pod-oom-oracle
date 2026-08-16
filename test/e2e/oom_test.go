@@ -218,6 +218,104 @@ func TestMultiProcessContainerNamesTheVictim(t *testing.T) {
 	}
 }
 
+// TestPodLevelBreachIsReported covers an OOM kill charged to the pod slice
+// rather than to a container.
+//
+// An init container seeds a memory-backed emptyDir and exits. Its tmpfs pages
+// stay resident and stay charged to the pod, so the app container is killed
+// while well under its own limit. The kernel breached the pod slice, not the
+// container.
+//
+// The regression this guards is that such a kill used to be dropped in silence:
+// the path did not parse as a container, so the daemon logged "skipping kill
+// outside the kubepods tree" at debug and produced nothing, while the pod read
+// OOMKilled. The invariant is therefore "a report exists and unattributed did
+// not move", not any particular cgroup scope.
+func TestPodLevelBreachIsReported(t *testing.T) {
+	const (
+		name = "oom-shared-memory"
+		// Both limits come from shared-memory-pod-level.yaml. The pod slice
+		// limit is the larger of the app containers' sum and the greediest init
+		// container, which here is the 128Mi seed rather than the 64Mi app.
+		appLimitBytes = 64 << 20
+		podLimitBytes = 128 << 20
+	)
+	daemon := daemonPod(t)
+	before := len(daemonReports(t, daemon))
+	// unattributed counts kills inside the kubepods tree that produced no
+	// report. It is the counter this bug moved, so it is the one to baseline.
+	unattributedBefore := daemonStatus(t, daemon).Unattributed
+
+	t.Cleanup(func() { deletePod(t, name) })
+	applyPod(t, example(t, "shared-memory-pod-level.yaml"))
+
+	uid := waitForPodUID(t, name)
+	waitForPodStarted(t, name)
+	found := waitForReport(t, daemon, name, before, uid)
+
+	if !found.Victim.Known {
+		t.Error("victim is unknown; the kill was seen but nothing was identified")
+	}
+	// The sample's whole lesson, and the one assertion that does not depend on
+	// which cgroup the report landed on: the victim held a fraction of the app
+	// container's own limit. Its own limit is not what killed it.
+	if found.Victim.RSSBytes >= appLimitBytes {
+		t.Errorf("victim RSS %d reached the app container's own limit %d; this workload "+
+			"must be killed by the pod slice while under that limit, or it tests nothing",
+			found.Victim.RSSBytes, appLimitBytes)
+	}
+
+	// Which scope the report lands on is a race. The daemon prefers the
+	// victim's container and only falls back to the pod slice when that cgroup
+	// is already torn down, which group-kill makes likely but not certain. Both
+	// shapes are legal; an identity that half-claims one is not.
+	switch found.Identity.Kind {
+	case "pod":
+		// A pod-scoped report describes the pod slice, so its limit and peak
+		// are the slice's. Reaching that limit is the correct reading here:
+		// the slice is exactly what the kernel broke.
+		if found.Identity.ContainerID != "" || found.Identity.ContainerName != "" {
+			t.Errorf("pod-scoped identity carries container %q/%q; it borrowed a name it cannot have",
+				found.Identity.ContainerID, found.Identity.ContainerName)
+		}
+		if found.Identity.Namespace != workloadNamespace || found.Identity.PodName != name {
+			t.Errorf("pod-scoped identity = %s/%s, want %s/%s; the pod is still nameable "+
+				"without a container", found.Identity.Namespace, found.Identity.PodName,
+				workloadNamespace, name)
+		}
+		if found.LimitBytes != podLimitBytes {
+			t.Errorf("pod-scoped limit = %d, want the pod slice limit %d",
+				found.LimitBytes, podLimitBytes)
+		}
+	case "container":
+		// A container-scoped report describes the app container, whose limit
+		// the victim never came close to. That gap is the finding.
+		assertResolved(t, found, name, "app")
+		if found.LimitBytes != appLimitBytes {
+			t.Errorf("container-scoped limit = %d, want the app container limit %d",
+				found.LimitBytes, appLimitBytes)
+		}
+		if found.PeakBytes >= found.LimitBytes {
+			t.Errorf("peak %d reached the container limit %d; the app container is "+
+				"supposed to die well under its own limit", found.PeakBytes, found.LimitBytes)
+		}
+	default:
+		t.Errorf("identity.kind = %q, want pod or container", found.Identity.Kind)
+	}
+
+	// The regression guard. Before the fix this kill incremented unattributed
+	// and produced no report at all.
+	if got := daemonStatus(t, daemon).Unattributed; got != unattributedBefore {
+		t.Errorf("unattributed went %d -> %d; a kill inside the kubepods tree was thrown away",
+			unattributedBefore, got)
+	}
+
+	t.Logf("report: kind=%s pod=%s/%s container=%q victim=%s rss=%d peak=%d limit=%d path=%s",
+		found.Identity.Kind, found.Identity.Namespace, found.Identity.PodName,
+		found.Identity.ContainerName, found.Victim.Comm, found.Victim.RSSBytes,
+		found.PeakBytes, found.LimitBytes, found.Identity.CgroupPath)
+}
+
 // waitForPodUID waits for the pod to be admitted and returns its UID.
 func waitForPodUID(t *testing.T, name string) string {
 	t.Helper()

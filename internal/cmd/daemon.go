@@ -197,7 +197,10 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, cfg daemonConfig) error 
 		return err
 	}
 
-	log.Info("daemon stopped", "reports", oracle.Processed(), "skipped", oracle.Skipped())
+	log.Info("daemon stopped",
+		"reports", oracle.Processed(),
+		"skipped", oracle.Skipped(),
+		"unattributed", oracle.Unattributed())
 	return nil
 }
 
@@ -315,6 +318,7 @@ func daemonStatus(
 		Ready:          oracle.Ready(),
 		Reports:        oracle.Processed(),
 		Skipped:        oracle.Skipped(),
+		Unattributed:   oracle.Unattributed(),
 		TrackedCgroups: oracle.Tracked(),
 		UptimeSeconds:  time.Since(started).Seconds(),
 		Version:        version.Get().Version,
