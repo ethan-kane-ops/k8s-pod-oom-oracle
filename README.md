@@ -275,6 +275,9 @@ curl -s localhost:9090/v1/status | jq
   "detector": "ebpf",
   "cgroupVersion": "v2",
   "ready": true,
+  "reports": 3,
+  "skipped": 128,
+  "unattributed": 0,
   "trackedCgroups": 47,
   "node": "worker-1",
   "podCacheSynced": true,
@@ -284,6 +287,12 @@ curl -s localhost:9090/v1/status | jq
 
 `detector: "poller"` means the eBPF probe did not attach. The daemon logs the
 reason at startup.
+
+`skipped` counts kills that belonged to no Kubernetes container. It climbs on
+any busy node, because the probes see every kill on the machine, so it is not a
+fault. `unattributed` is the subset that came from inside the kubepods tree,
+meaning a real Kubernetes OOM kill the daemon could not place and therefore
+never reported. That one should stay at zero, and it is the field to alert on.
 
 ---
 

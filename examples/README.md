@@ -19,6 +19,7 @@ kubectl apply -f deploy/
 | [`workloads/worker-pool.yaml`](workloads/worker-pool.yaml) | Which of five processes took the memory |
 | [`workloads/multi-process-survivor.yaml`](workloads/multi-process-survivor.yaml) | The container surviving its child, and the runtime setting that decides whether it can |
 | [`workloads/jvm-heap-overrun.yaml`](workloads/jvm-heap-overrun.yaml) | `-Xmx` above the container limit, killed before any application code runs |
+| [`workloads/shared-memory-pod-level.yaml`](workloads/shared-memory-pod-level.yaml) | A container killed at 43% of its own limit, because the pod slice ran out first |
 
 Apply one, wait a few seconds, then read the report:
 
@@ -34,9 +35,10 @@ The daemon's image is distroless and has no shell, so reach it through the API
 server proxy as above, or with `kubectl port-forward`. `kubectl exec` will not
 work.
 
-The first two workloads are also what the end-to-end suite runs. It reads these
-exact files, so a sample that stops producing the report its header describes
-fails CI rather than quietly becoming wrong.
+The first two workloads and `shared-memory-pod-level.yaml` are also what the
+end-to-end suite runs. It reads these exact files, so a sample that stops
+producing the report its header describes fails CI rather than quietly becoming
+wrong.
 
 ## Deployment variants
 
@@ -52,7 +54,7 @@ kubectl -n oom-oracle patch daemonset oom-oracle \
   --patch-file examples/deployments/poller-only.yaml
 ```
 
-## Three things these samples will teach you the hard way
+## Four things these samples will teach you the hard way
 
 **A flat trajectory does not mean an idle container.** The sampler reads once a
 second. `tail /dev/zero` reaches a 128 MiB limit in far less than that, so every
@@ -67,6 +69,14 @@ every process in the container, and 0 under Docker, which kills only the process
 the kernel selected. The same manifest therefore behaves differently on
 different clusters. `multi-process-survivor.yaml` covers both and shows how to
 check which you have.
+
+**Your container's own limit is not the only limit that can kill it.** The
+kubelet gives each pod a cgroup slice with a limit of its own, set to the larger
+of the app containers' combined limits and the greediest init container's. A
+memory-backed `emptyDir` is charged to that slice and its pages outlive whatever
+wrote them, so a container can be killed while holding well under half of what
+it was promised. `shared-memory-pod-level.yaml` reproduces exactly that, and
+raising the container's limit does not fix it.
 
 **`victim.cmdline` is usually null.** Recovering it means reading `/proc` while
 the process is being killed, and that race is normally lost; it was lost in

@@ -288,3 +288,13 @@ func (d *Daemon) Processed() uint64 { return d.processed.Load() }
 
 // Skipped reports how many events were discarded as non-Kubernetes.
 func (d *Daemon) Skipped() uint64 { return d.skipped.Load() }
+
+// Unattributed reports the subset of Skipped that came from inside the kubepods
+// tree.
+//
+// It is the half of Skipped worth alerting on. A skip out on the host is the
+// daemon doing its job, since the probes see every kill on the node; a skip
+// inside the tree is a Kubernetes OOM kill this daemon could not place and
+// therefore never reported. Without the split the second is invisible inside
+// the first, which is the exact shape of the bug that motivated the counter.
+func (d *Daemon) Unattributed() uint64 { return d.unattributed.Load() }

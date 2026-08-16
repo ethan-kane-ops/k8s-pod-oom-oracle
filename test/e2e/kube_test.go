@@ -101,6 +101,7 @@ type status struct {
 	Ready          bool    `json:"ready"`
 	Reports        uint64  `json:"reports"`
 	Skipped        uint64  `json:"skipped"`
+	Unattributed   uint64  `json:"unattributed"`
 	TrackedCgroups int     `json:"trackedCgroups"`
 	UptimeSeconds  float64 `json:"uptimeSeconds"`
 	Version        string  `json:"version"`
@@ -118,6 +119,7 @@ type report struct {
 	Identity struct {
 		PodUID        string `json:"podUID"`
 		ContainerID   string `json:"containerID"`
+		Kind          string `json:"kind"`
 		QoS           string `json:"qos"`
 		CgroupPath    string `json:"cgroupPath"`
 		Resolved      bool   `json:"resolved"`

@@ -64,6 +64,7 @@ func TestStatusServesTheSnapshot(t *testing.T) {
 		Ready:          true,
 		Reports:        7,
 		Skipped:        2,
+		Unattributed:   1,
 		TrackedCgroups: 47,
 		UptimeSeconds:  12.5,
 		Version:        "v1.2.3",

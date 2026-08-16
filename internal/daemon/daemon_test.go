@@ -402,9 +402,10 @@ func TestHandleWarnsOnlyForKillsItShouldHavePlaced(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		cgroupPath   string
-		wantWarnings int
+		name             string
+		cgroupPath       string
+		wantWarnings     int
+		wantUnattributed uint64
 	}{
 		{
 			name:       "host service is routine",
@@ -416,7 +417,8 @@ func TestHandleWarnsOnlyForKillsItShouldHavePlaced(t *testing.T) {
 			name: "unparseable inside the kubepods tree is a lost report",
 			cgroupPath: "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" +
 				podUID + ".slice/mystery-" + ctrID + ".scope",
-			wantWarnings: 1,
+			wantWarnings:     1,
+			wantUnattributed: 1,
 		},
 	}
 
@@ -444,6 +446,12 @@ func TestHandleWarnsOnlyForKillsItShouldHavePlaced(t *testing.T) {
 			}
 			if got := d.Skipped(); got != 1 {
 				t.Errorf("Skipped() = %d, want 1", got)
+			}
+			// Unattributed is the subset an operator alerts on, so it must move
+			// only for the in-tree case. Counting both would make the signal as
+			// useless as the single counter it replaced.
+			if got := d.Unattributed(); got != tt.wantUnattributed {
+				t.Errorf("Unattributed() = %d, want %d", got, tt.wantUnattributed)
 			}
 			if got := handler.warnings(); len(got) != tt.wantWarnings {
 				t.Errorf("warnings = %d %q, want %d", len(got), got, tt.wantWarnings)

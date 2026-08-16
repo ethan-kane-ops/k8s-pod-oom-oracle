@@ -1,0 +1,144 @@
+# A container killed while it is nowhere near its own memory limit.
+#
+# This is the sample that breaks the mental model most people carry, which is
+# "my container has a 64 MiB limit, so it dies when it reaches 64 MiB". There is
+# a second limit above it. The kubelet puts every pod in its own cgroup slice
+# and gives that slice a limit too, and a pod slice can be exhausted by memory
+# that no container is currently holding.
+#
+# A memory-backed emptyDir is the usual way that happens. It is a tmpfs, so its
+# pages are real memory charged to the pod, and unlike a process's heap they do
+# not go away when the writer exits. Here an init container seeds 100 MiB of
+# shared state and exits cleanly. That 100 MiB stays resident and stays charged
+# to the pod slice. The app container then starts against a pod that has already
+# spent most of its budget, and dies at roughly 27 MiB against its own 64 MiB
+# limit.
+#
+#   kubectl apply -f examples/workloads/shared-memory-pod-level.yaml
+#
+# THE ARITHMETIC
+#
+#   pod slice limit    128 MiB   max(sum of app limits, largest init limit)
+#   seed init limit    128 MiB
+#   app limit           64 MiB
+#
+#   after seed exits   100 MiB   tmpfs pages, charged to the pod, owned by nobody
+#   app is killed at    27 MiB   100 + 27 + the sandbox = 128, the pod slice limit
+#
+# The pod limit is not the sum of the container limits here. Kubernetes takes
+# the larger of "everything the app containers ask for" and "the greediest
+# single init container", because init containers run one at a time and finish
+# before the app containers start. The 128 MiB comes from `seed`, and the app
+# container inherits a budget it never asked for and cannot see.
+#
+# EXPECTED REPORT (abridged, from a real run on kind):
+#
+#   source        ebpf
+#   pod           oom-oracle-e2e/oom-shared-memory/app
+#   victim        tail, nsPid 20, rss 28573696, inferred false
+#   limitBytes    67108864         (64 MiB, the app container's own limit)
+#   peakBytes     28573696         (27 MiB: killed at 43% of its own limit)
+#   trajectory    3 samples, all 0.4 MiB
+#
+# Read `peakBytes` against `limitBytes` and the report has already told you the
+# thing Kubernetes cannot. `kubectl describe` says `OOMKilled`, exit 137, which
+# reads as "the app used too much memory". The app used 43% of what it was
+# given. Raising its limit would not have helped, and is what most people try
+# first.
+#
+# The trajectory is flat at 0.4 MiB and never shows the climb, for the same
+# reason it does in single-process-killed.yaml: `tail /dev/zero` crosses the
+# remaining headroom in far less than one sample interval. Here the peak does
+# not come from the kernel's memory.peak either, because the container's cgroup
+# is already gone by the time the report is built. It is floored at the victim's
+# own resident size instead, which is why peak and the victim's rss agree
+# exactly.
+#
+# WHICH CGROUP THE REPORT NAMES
+#
+# This sample can produce either of two report shapes, and both are correct.
+#
+# The kernel breached the limit on the *pod slice*, but the process it chose to
+# kill lives in the *app container* below it. The daemon prefers to name the
+# container, because "which container lost a process" is the more useful answer
+# and it is the one that carries a container name and image. So most runs report
+# `identity.kind: container` naming `app`.
+#
+# When the container's cgroup is torn down before the daemon can read it, which
+# happens because `memory.oom.group=1` kills every process in it at once, there
+# is no container left to name. The report then falls back to the pod slice and
+# reads `identity.kind: pod`, with an empty `containerID` and `containerName`.
+# It still names the namespace and pod. This is the shape that used to be
+# dropped silently, and the daemon's `unattributed` counter in /v1/status exists
+# to prove it no longer is.
+#
+# WHAT TO DO ABOUT IT IN PRODUCTION
+#
+# Set `sizeLimit` on any memory-backed emptyDir. Without it the kubelet sizes
+# the tmpfs at the pod's memory limit, so a runaway writer can consume the pod's
+# entire budget before the filesystem itself objects. With it, the writer gets
+# ENOSPC, which is an error your application can handle, instead of an OOM kill
+# it cannot.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-shared-memory
+  labels:
+    app.kubernetes.io/name: oom-oracle-example
+spec:
+  # Never, so the pod stays Failed for inspection instead of restarting into a
+  # fresh OOM every few seconds.
+  restartPolicy: Never
+  volumes:
+    - name: shared
+      emptyDir:
+        # The whole point of the sample. Without `medium: Memory` this is a disk
+        # directory, nothing is charged to the pod, and no kill happens.
+        #
+        # Deliberately left without a sizeLimit, which is what makes the failure
+        # possible. See the closing note above: setting one is the fix.
+        medium: Memory
+  initContainers:
+    # Seeds the shared volume and exits. Stands in for the real versions of this
+    # pattern: unpacking a model, warming a cache, staging a dataset that the
+    # app then reads without paying for it twice.
+    - name: seed
+      image: alpine:3.20
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      args:
+        - |
+          dd if=/dev/zero of=/shared/seed bs=1M count=100 2>&1 | tail -1
+          echo "seed: wrote 100 MiB, exiting cleanly"
+      volumeMounts:
+        - name: shared
+          mountPath: /shared
+      # This is what sets the pod slice limit to 128 MiB, and it is easy to miss
+      # when reading the manifest: an init container's limit outlives the init
+      # container.
+      resources:
+        limits:
+          memory: 128Mi
+        requests:
+          memory: 64Mi
+  containers:
+    - name: app
+      image: alpine:3.20
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      # Prints its own budget before allocating, so `kubectl logs` shows the
+      # gap between what this container was promised and what it actually got.
+      args:
+        - |
+          echo "app: my limit=$(cat /sys/fs/cgroup/memory.max) current=$(cat /sys/fs/cgroup/memory.current)"
+          echo "app: shared volume holds $(du -sh /shared/seed | cut -f1)"
+          sleep 3
+          tail /dev/zero
+      volumeMounts:
+        - name: shared
+          mountPath: /shared
+      resources:
+        limits:
+          memory: 64Mi
+        requests:
+          memory: 32Mi
