@@ -212,17 +212,40 @@ func (d *Daemon) buildReport(event detector.KillEvent) (oom.Report, bool) {
 	}
 
 	d.applyLiveStats(&report, event)
+	d.applyGroupKill(&report, event)
 
 	if d.proc != nil {
-		survivors, err := d.proc.ProcessesInCgroup(event.CgroupPath)
+		procs, err := d.proc.ProcessesInCgroup(event.CgroupPath)
 		if err != nil {
-			d.log.Debug("listing survivors", "cgroup", event.CgroupPath, "error", err)
+			d.log.Debug("listing container processes", "cgroup", event.CgroupPath, "error", err)
 		} else {
-			report.Hogs = oom.HogsFrom(survivors, event.Victim.PID)
+			report.Processes = oom.ProcessesFrom(procs, event.Victim)
 		}
 	}
 
 	return report, true
+}
+
+// applyGroupKill records whether the cgroup is killed as an indivisible unit,
+// which decides what the process listing means.
+//
+// A false result means "not observed", not "the container survives". Under group
+// kill the container is already gone, so its cgroup is often torn down before
+// this read happens and the answer is simply unavailable. Nothing downstream may
+// therefore read false as a promise that anything survived, which is why the
+// renderer states survival only when this is known to be false and never as the
+// default.
+func (d *Daemon) applyGroupKill(report *oom.Report, event detector.KillEvent) {
+	if d.cgroup == nil {
+		return
+	}
+	groupKill, err := d.cgroup.ReadOOMGroup(event.CgroupPath)
+	if err != nil {
+		d.log.Debug("reading memory.oom.group",
+			"cgroup", event.CgroupPath, "error", err)
+		return
+	}
+	report.GroupKill = groupKill
 }
 
 // applyLiveStats corrects the headline numbers using the cgroup itself.

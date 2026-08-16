@@ -145,10 +145,12 @@ type report struct {
 		LimitBytes uint64  `json:"limitBytes"`
 		Ratio      float64 `json:"ratio"`
 	} `json:"trajectory"`
-	Hogs []struct {
-		PID  int    `json:"pid"`
-		Comm string `json:"comm"`
-	} `json:"hogs"`
+	Processes []struct {
+		PID   int    `json:"pid"`
+		NSPid int    `json:"nsPid"`
+		Comm  string `json:"comm"`
+	} `json:"processes"`
+	GroupKill bool `json:"groupKill"`
 }
 
 func daemonStatus(t *testing.T, pod string) status {

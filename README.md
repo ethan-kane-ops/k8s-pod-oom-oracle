@@ -46,7 +46,7 @@ flowchart TD
         RB["ring buffer"]
         DET["detector: ebpf or poller"]
         SAM["cgroup sampler:<br/>usage, limits, PSI stall"]
-        PROC["procfs reader:<br/>victim cmdline, survivors"]
+        PROC["procfs reader:<br/>victim cmdline, process list"]
         POD["pod informer,<br/>scoped to this node"]
         RES["correlator:<br/>cgroup path to pod UID"]
         ASM["report assembler"]
@@ -208,7 +208,7 @@ VICTIM PROCESS:
   Memory at death: 114.0MiB
   Confidence:      traced in the kernel at the moment of the kill.
 
-SURVIVING PROCESSES IN CONTAINER:
+PROCESSES IN CONTAINER AFTER THE KILL:
   1. node ./dist/server.js (PID 28102) - 390.0MiB
   2. node ./dist/worker.js (PID 28160) - 8.0MiB
 ```
@@ -357,7 +357,7 @@ Build metadata, as `text` or `json`.
 |---|---|
 | `privileged: true` | Loading a BPF program and attaching a kprobe. Without it the daemon still runs, on the poller |
 | `runAsUser: 0` | A non-root process starts with an empty effective capability set regardless of its bounding set, so `bpf()` returns `EPERM` and the daemon silently degrades |
-| `hostPID: true` | `/proc` must show the node's processes, or there is no victim to identify and no survivors to list |
+| `hostPID: true` | `/proc` must show the node's processes, or there is no victim to identify and no process list to build |
 | `/sys/fs/cgroup`, `/proc` | Read-only host mounts. The daemon never writes to the node |
 | `pods: get,list,watch` | The only cluster access it has. Read-only, and only to turn a pod UID into a name |
 

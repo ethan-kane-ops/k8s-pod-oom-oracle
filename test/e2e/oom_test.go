@@ -154,10 +154,20 @@ func TestMultiProcessContainerNamesTheVictim(t *testing.T) {
 	if found.Victim.NSPid == 0 {
 		t.Error("NSPid is 0; the container-local PID is the one a developer recognises")
 	}
-	// Hogs is deliberately not asserted. Under group kill the daemon snapshots
-	// /proc at the moment of the kill and catches processes that are themselves
-	// dying, so its contents are a race rather than a fact. Asserting on it
-	// would encode that race as a requirement.
+	// Which processes appear is a race under group kill, so the listing's
+	// contents are not asserted. That the victim is absent from it is not a
+	// race: the daemon removes it by container-namespace PID, which is the same
+	// number on both sides however the runtime is nested. Before that fix this
+	// compared the kernel's global PID against a PID read from the node's /proc,
+	// which cannot match inside kind, and the dead process was listed as though
+	// it were alive.
+	for _, proc := range found.Processes {
+		if proc.NSPid == found.Victim.NSPid {
+			t.Errorf("processes lists the victim (comm %q, nspid %d, host pid %d); "+
+				"it is dead by definition and must be filtered out",
+				proc.Comm, proc.NSPid, proc.PID)
+		}
+	}
 
 	// The runtime's own setting is what decides whether the container could have
 	// survived, so read it rather than inferring it from pod phase, which lags
@@ -191,12 +201,22 @@ func TestMultiProcessContainerNamesTheVictim(t *testing.T) {
 	}
 	t.Logf("runtime: memory.oom.group=%s terminated=%q", groupKill, terminatedReason(t, name))
 
+	// Only one direction is safe to assert. The report's flag is set from a read
+	// of the container's cgroup at report time, and under group kill that cgroup
+	// is often already torn down, so false legitimately means "could not tell".
+	// True is never a guess, so it must agree with the node.
+	if found.GroupKill && groupKill != "1" {
+		t.Errorf("report says groupKill=true but the container scope reports "+
+			"memory.oom.group=%q", groupKill)
+	}
+
 	assertResolved(t, found, name, "app")
 
-	t.Logf("report: source=%s pod=%s/%s/%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t survivors=%d",
+	t.Logf("report: source=%s pod=%s/%s/%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t processes=%d groupKill=%t",
 		found.Source, found.Identity.Namespace, found.Identity.PodName,
 		found.Identity.ContainerName, found.Victim.Comm, found.Victim.PID,
-		found.Victim.NSPid, found.Victim.RSSBytes, found.Victim.Inferred, len(found.Hogs))
+		found.Victim.NSPid, found.Victim.RSSBytes, found.Victim.Inferred,
+		len(found.Processes), found.GroupKill)
 
 	// The eBPF detector reads the victim out of the kernel, so it can state
 	// things the poller can only guess at. Only hold it to that standard.

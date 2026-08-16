@@ -24,5 +24,8 @@ VICTIM PROCESS:
   Confidence:      traced in the kernel at the moment of the kill.
 
 PROCESSES IN CONTAINER AFTER THE KILL:
+  memory.oom.group=1: the kernel killed every process in this
+  container, so the list below is a teardown snapshot rather than
+  survivors, and resident sizes are already collapsing.
   1. node ./dist/server.js (PID 28102) - 390.0MiB
   2. node ./dist/worker.js (PID 28160) - 8.0MiB

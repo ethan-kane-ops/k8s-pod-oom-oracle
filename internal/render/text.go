@@ -20,8 +20,8 @@ const (
 	// 60 samples, which is more noise than signal in a terminal, so it is
 	// downsampled evenly with the final reading always kept.
 	maxTrajectoryRows = 8
-	// maxHogs caps the process listing.
-	maxHogs = 10
+	// maxProcesses caps the process listing.
+	maxProcesses = 10
 	// oomExitCode is what a shell reports for a SIGKILL from the OOM killer.
 	oomExitCode = 137
 )
@@ -53,7 +53,7 @@ func Text(report *oom.Report, opts TextOptions) string {
 	writeDiagnosis(&b, report, opts)
 	writeTrajectory(&b, report, opts)
 	writeVictim(&b, report)
-	writeHogs(&b, report)
+	writeProcesses(&b, report)
 
 	return b.String()
 }
@@ -157,23 +157,35 @@ func writeVictim(b *strings.Builder, report *oom.Report) {
 	}
 }
 
-func writeHogs(b *strings.Builder, report *oom.Report) {
-	if len(report.Hogs) == 0 {
+// writeProcesses lists the container's other processes.
+//
+// The heading deliberately does not claim survival. Report.GroupKill is false
+// both when the container really does survive and when the daemon could not tell,
+// so a "SURVIVING PROCESSES" heading would assert something unproven every time
+// the cgroup was torn down before it could be read. Stating what was observed,
+// and adding the group-kill caveat only when it is known, is true either way.
+func writeProcesses(b *strings.Builder, report *oom.Report) {
+	if len(report.Processes) == 0 {
 		return
 	}
 
-	b.WriteString("\nSURVIVING PROCESSES IN CONTAINER:\n")
-
-	hogs := report.Hogs
-	truncated := 0
-	if len(hogs) > maxHogs {
-		truncated = len(hogs) - maxHogs
-		hogs = hogs[:maxHogs]
+	b.WriteString("\nPROCESSES IN CONTAINER AFTER THE KILL:\n")
+	if report.GroupKill {
+		b.WriteString("  memory.oom.group=1: the kernel killed every process in this\n" +
+			"  container, so the list below is a teardown snapshot rather than\n" +
+			"  survivors, and resident sizes are already collapsing.\n")
 	}
 
-	for i, hog := range hogs {
+	procs := report.Processes
+	truncated := 0
+	if len(procs) > maxProcesses {
+		truncated = len(procs) - maxProcesses
+		procs = procs[:maxProcesses]
+	}
+
+	for i, proc := range procs {
 		fmt.Fprintf(b, "  %d. %s (PID %d) - %s\n",
-			i+1, commandLine(hog.Comm, hog.Cmdline), hog.PID, Bytes(hog.RSSBytes))
+			i+1, commandLine(proc.Comm, proc.Cmdline), proc.PID, Bytes(proc.RSSBytes))
 	}
 	if truncated > 0 {
 		fmt.Fprintf(b, "  ... and %d more\n", truncated)

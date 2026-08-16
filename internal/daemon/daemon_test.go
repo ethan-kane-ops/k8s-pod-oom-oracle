@@ -146,7 +146,21 @@ func (h *harness) setMemoryAt(cgroupPath string, current, limit, peak uint64) {
 	}
 }
 
-// addProcess writes a surviving process into the container.
+// setOOMGroup writes memory.oom.group for a cgroup. Absent means the kernel
+// predates the file or the hierarchy is v1, which the reader treats as unset.
+func (h *harness) setOOMGroup(cgroupPath string, on bool) {
+	value := '0'
+	if on {
+		value = '1'
+	}
+	h.cgroups[cgroupPath[1:]+"/memory.oom.group"] = &fstest.MapFile{
+		Data: []byte{byte(value), '\n'},
+	}
+}
+
+// addProcess writes a process into the container. Its in-container PID is
+// derived from the host PID, so a test can pick a host PID whose last two digits
+// are the NSPid it wants to collide with.
 func (h *harness) addProcess(pid int, comm string, rssKB int) {
 	dir := strconv.Itoa(pid)
 	h.procs[dir+"/status"] = &fstest.MapFile{
@@ -298,14 +312,98 @@ func TestHandleBuildsFullReport(t *testing.T) {
 	if !report.Trend.Projected {
 		t.Error("Trend.Projected = false, want a projection for climbing memory")
 	}
-	if len(report.Hogs) != 2 {
-		t.Fatalf("len(Hogs) = %d, want 2 survivors", len(report.Hogs))
+	if len(report.Processes) != 2 {
+		t.Fatalf("len(Processes) = %d, want the 2 non-victim processes", len(report.Processes))
 	}
-	if report.Hogs[0].Comm != "server" {
-		t.Errorf("Hogs[0] = %q, want the heaviest survivor first", report.Hogs[0].Comm)
+	if report.Processes[0].Comm != "server" {
+		t.Errorf("Processes[0] = %q, want the heaviest process first", report.Processes[0].Comm)
 	}
 	if report.ID == "" {
 		t.Error("report ID is empty")
+	}
+}
+
+// TestHandleFiltersVictimAcrossPIDNamespaces is the ENG-131 regression test.
+//
+// Under a nested runtime the probe reports the kernel's global PID, which does
+// not appear in the /proc the daemon can read, so comparing host PIDs leaves the
+// dead process listed as though it were alive. Here the victim is at global pid
+// 1397320 and the same process appears in /proc as pid 28117, in-container 17.
+func TestHandleFiltersVictimAcrossPIDNamespaces(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, testLookup())
+	h.setMemory(500<<20, 512<<20, 512<<20)
+	h.addProcess(28102, "server", 400<<10)
+	h.addProcess(28117, "gc", 1<<10)
+	h.collect(t)
+
+	event := killEvent()
+	event.Victim.PID = 1397320
+	event.Victim.NSPid = 17
+	h.daemon.Handle(context.Background(), event)
+
+	report := h.latest(t)
+	for _, proc := range report.Processes {
+		if proc.NSPid == 17 {
+			t.Errorf("Processes contains the victim (nspid 17, host pid %d); "+
+				"host PIDs cannot match under a nested runtime, so NSPid must be used",
+				proc.PID)
+		}
+	}
+	if len(report.Processes) != 1 {
+		t.Fatalf("len(Processes) = %d, want 1 once the victim is removed", len(report.Processes))
+	}
+	if report.Processes[0].Comm != "server" {
+		t.Errorf("Processes[0] = %q, want server", report.Processes[0].Comm)
+	}
+}
+
+// TestHandleRecordsGroupKill covers the flag that decides whether the process
+// listing means survivors or a teardown snapshot.
+func TestHandleRecordsGroupKill(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(*harness)
+		want  bool
+	}{
+		{
+			// containerd's default, so this is what almost every cluster does.
+			name:  "group kill is recorded when the cgroup is killed as a unit",
+			setup: func(h *harness) { h.setOOMGroup(containerCgroup, true) },
+			want:  true,
+		},
+		{
+			name:  "a cgroup that kills one process reports false",
+			setup: func(h *harness) { h.setOOMGroup(containerCgroup, false) },
+			want:  false,
+		},
+		{
+			// An older kernel has no such file. False here means "not observed",
+			// which is why nothing downstream claims survival from it.
+			name:  "an absent file reports false rather than failing",
+			setup: func(*harness) {},
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, testLookup())
+			h.setMemory(500<<20, 512<<20, 512<<20)
+			tt.setup(h)
+			h.collect(t)
+
+			h.daemon.Handle(context.Background(), killEvent())
+
+			if got := h.latest(t).GroupKill; got != tt.want {
+				t.Errorf("GroupKill = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
