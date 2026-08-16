@@ -20,6 +20,6 @@ VICTIM PROCESS:
   Could not be identified.
   The kernel reported a kill but no sampled process disappeared.
 
-SURVIVING PROCESSES IN CONTAINER:
+PROCESSES IN CONTAINER AFTER THE KILL:
   1. node ./dist/server.js (PID 28102) - 390.0MiB
   2. node ./dist/worker.js (PID 28160) - 8.0MiB

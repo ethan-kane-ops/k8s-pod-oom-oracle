@@ -61,7 +61,7 @@ func fullReport() oom.Report {
 			BytesPerSecond: 1 << 20, RSquared: 0.97, Samples: 5,
 			Window: time.Minute, TimeToLimit: 0, Projected: true,
 		},
-		Hogs: []oom.HogProcess{
+		Processes: []oom.ProcessSnapshot{
 			{PID: 28102, NSPid: 1, Comm: "node", Cmdline: []string{"node", "./dist/server.js"}, RSSBytes: 390 << 20},
 			{PID: 28160, NSPid: 22, Comm: "node", Cmdline: []string{"node", "./dist/worker.js"}, RSSBytes: 8 << 20},
 		},
@@ -116,10 +116,20 @@ func TestTextGolden(t *testing.T) {
 			},
 		},
 		{
-			name: "no_survivors",
+			name: "no_processes",
 			report: func() oom.Report {
 				r := fullReport()
-				r.Hogs = nil
+				r.Processes = nil
+				return r
+			},
+		},
+		{
+			// The containerd default. The listing must not be presented as
+			// survivors, because none of them are.
+			name: "group_kill",
+			report: func() oom.Report {
+				r := fullReport()
+				r.GroupKill = true
 				return r
 			},
 		},
@@ -255,15 +265,15 @@ func TestDownsample(t *testing.T) {
 	}
 }
 
-// TestTextTruncatesLongHogList keeps a container with hundreds of processes
+// TestTextTruncatesLongProcessList keeps a container with hundreds of processes
 // from flooding a terminal.
-func TestTextTruncatesLongHogList(t *testing.T) {
+func TestTextTruncatesLongProcessList(t *testing.T) {
 	t.Parallel()
 
 	report := fullReport()
-	report.Hogs = make([]oom.HogProcess, 25)
-	for i := range report.Hogs {
-		report.Hogs[i] = oom.HogProcess{PID: 1000 + i, Comm: "worker", RSSBytes: uint64(i) << 20}
+	report.Processes = make([]oom.ProcessSnapshot, 25)
+	for i := range report.Processes {
+		report.Processes[i] = oom.ProcessSnapshot{PID: 1000 + i, Comm: "worker", RSSBytes: uint64(i) << 20}
 	}
 
 	got := Text(&report, TextOptions{})
@@ -411,7 +421,7 @@ func TestTextNeverEmitsControlCharacters(t *testing.T) {
 
 	report := fullReport()
 	report.Victim.Cmdline = []string{"sh", "-c", "echo\n\r\x1b[31mhax\x1b[0m"}
-	report.Hogs = []oom.HogProcess{{PID: 1, Comm: "x", Cmdline: []string{"a\nb"}, RSSBytes: 1}}
+	report.Processes = []oom.ProcessSnapshot{{PID: 1, Comm: "x", Cmdline: []string{"a\nb"}, RSSBytes: 1}}
 
 	for _, r := range Text(&report, TextOptions{}) {
 		if r != '\n' && unicode.IsControl(r) {

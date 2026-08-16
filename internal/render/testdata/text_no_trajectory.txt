@@ -17,6 +17,6 @@ VICTIM PROCESS:
   Memory at death: 114.0MiB
   Confidence:      traced in the kernel at the moment of the kill.
 
-SURVIVING PROCESSES IN CONTAINER:
+PROCESSES IN CONTAINER AFTER THE KILL:
   1. node ./dist/server.js (PID 28102) - 390.0MiB
   2. node ./dist/worker.js (PID 28160) - 8.0MiB

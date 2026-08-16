@@ -164,6 +164,27 @@ func (f *FS) ReadMemoryStats(cgroupPath string) (MemoryStats, error) {
 	return f.readMemoryStatsV2(cgroupPath)
 }
 
+// ReadOOMGroup reports whether the cgroup is killed as an indivisible unit.
+//
+// When memory.oom.group is set the kernel kills every process in the cgroup
+// rather than the single process its badness heuristic picked. containerd sets
+// it on the container scope, so on almost every current cluster an OOM takes the
+// whole container down. That changes what a process listing taken after the kill
+// means, which is why a report carries this alongside the listing itself.
+//
+// The file is cgroup v2 only, and arrived in 4.19. A v1 hierarchy or an older
+// kernel reports false, which is correct: neither group-kills.
+func (f *FS) ReadOOMGroup(cgroupPath string) (bool, error) {
+	if f.version == V1 {
+		return false, nil
+	}
+	value, err := f.readUintOptional(path.Join(cleanCgroupPath(cgroupPath), "memory.oom.group"))
+	if err != nil {
+		return false, err
+	}
+	return value != 0, nil
+}
+
 func (f *FS) readMemoryStatsV2(cgroupPath string) (MemoryStats, error) {
 	dir := cleanCgroupPath(cgroupPath)
 

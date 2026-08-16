@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/cgroup"
+	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/detector"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/procfs"
 	"github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/sampler"
 )
@@ -90,7 +91,7 @@ func TestTrajectoryFrom(t *testing.T) {
 	}
 }
 
-func TestHogsFrom(t *testing.T) {
+func TestProcessesFrom(t *testing.T) {
 	procs := []procfs.Process{
 		{PID: 100, NSPid: 1, Comm: "server", Cmdline: []string{"node", "server.js"}, RSSBytes: 390},
 		{PID: 200, NSPid: 17, Comm: "victim", Cmdline: []string{"tail", "/dev/zero"}, RSSBytes: 114},
@@ -98,83 +99,116 @@ func TestHogsFrom(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		procs     []procfs.Process
-		victimPID int
-		wantPIDs  []int
+		name     string
+		procs    []procfs.Process
+		victim   detector.Victim
+		wantPIDs []int
 	}{
 		{
-			name:      "no processes yields no hogs",
-			procs:     nil,
-			victimPID: 200,
-			wantPIDs:  []int{},
+			name:     "no processes yields no entries",
+			procs:    nil,
+			victim:   detector.Victim{PID: 200, NSPid: 17},
+			wantPIDs: []int{},
 		},
 		{
-			// The daemon lists survivors, so a victim still visible in /proc
-			// while it dies must not be reported as one of them.
-			name:      "the victim is excluded",
-			procs:     procs,
-			victimPID: 200,
-			wantPIDs:  []int{100, 300},
+			// A victim still visible in /proc while it dies must not be listed
+			// alongside the processes that are genuinely there.
+			name:     "the victim is excluded on a matching host pid",
+			procs:    procs,
+			victim:   detector.Victim{PID: 200, NSPid: 17},
+			wantPIDs: []int{100, 300},
 		},
 		{
-			name:      "an absent victim removes nothing",
-			procs:     procs,
-			victimPID: 999,
-			wantPIDs:  []int{100, 200, 300},
+			// The defect this function exists to fix. Under a nested runtime the
+			// probe reports the kernel's global pid, which is nowhere in the
+			// daemon's /proc, so only NSPid can identify the victim.
+			name:     "the victim is excluded on nspid when host pids disagree",
+			procs:    procs,
+			victim:   detector.Victim{PID: 1397320, NSPid: 17},
+			wantPIDs: []int{100, 300},
 		},
 		{
-			name:      "an unknown victim pid of zero removes nothing",
-			procs:     procs,
-			victimPID: 0,
-			wantPIDs:  []int{100, 200, 300},
+			name:     "a host pid match wins even with a mismatched nspid",
+			procs:    procs,
+			victim:   detector.Victim{PID: 200, NSPid: 999},
+			wantPIDs: []int{100, 300},
+		},
+		{
+			name:     "an absent victim removes nothing",
+			procs:    procs,
+			victim:   detector.Victim{PID: 999, NSPid: 998},
+			wantPIDs: []int{100, 200, 300},
+		},
+		{
+			name:     "an unknown victim removes nothing",
+			procs:    procs,
+			victim:   detector.Victim{},
+			wantPIDs: []int{100, 200, 300},
+		},
+		{
+			// Deleting a process that is genuinely running is a worse report
+			// than leaving the victim in, so an NSPid shared by two processes
+			// disables the fallback instead of guessing between them.
+			name: "an ambiguous nspid disables the fallback",
+			procs: []procfs.Process{
+				{PID: 100, NSPid: 1, Comm: "outer"},
+				{PID: 200, NSPid: 1, Comm: "inner"},
+			},
+			victim:   detector.Victim{PID: 1397320, NSPid: 1},
+			wantPIDs: []int{100, 200},
+		},
+		{
+			name:     "a zero nspid on both sides is not a match",
+			procs:    []procfs.Process{{PID: 100, NSPid: 0, Comm: "server"}},
+			victim:   detector.Victim{PID: 1397320, NSPid: 0},
+			wantPIDs: []int{100},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := HogsFrom(tc.procs, tc.victimPID)
+			got := ProcessesFrom(tc.procs, tc.victim)
 
 			if got == nil {
-				t.Fatal("HogsFrom returned nil; callers marshal this directly and want [] not null")
+				t.Fatal("ProcessesFrom returned nil; callers marshal this directly and want [] not null")
 			}
 			if len(got) != len(tc.wantPIDs) {
-				t.Fatalf("got %d hogs, want %d", len(got), len(tc.wantPIDs))
+				t.Fatalf("got %d processes, want %d", len(got), len(tc.wantPIDs))
 			}
 			for i, wantPID := range tc.wantPIDs {
 				if got[i].PID != wantPID {
-					t.Errorf("hog %d has pid %d, want %d", i, got[i].PID, wantPID)
+					t.Errorf("process %d has pid %d, want %d", i, got[i].PID, wantPID)
 				}
 			}
 		})
 	}
 }
 
-func TestHogsFromCopiesEveryField(t *testing.T) {
+func TestProcessesFromCopiesEveryField(t *testing.T) {
 	proc := procfs.Process{
 		PID: 100, NSPid: 7, Comm: "server",
 		Cmdline: []string{"node", "server.js"}, RSSBytes: 390,
 	}
 
-	got := HogsFrom([]procfs.Process{proc}, 0)
+	got := ProcessesFrom([]procfs.Process{proc}, detector.Victim{})
 	if len(got) != 1 {
-		t.Fatalf("got %d hogs, want 1", len(got))
+		t.Fatalf("got %d processes, want 1", len(got))
 	}
 
-	hog := got[0]
-	if hog.PID != proc.PID || hog.NSPid != proc.NSPid || hog.Comm != proc.Comm {
+	snapshot := got[0]
+	if snapshot.PID != proc.PID || snapshot.NSPid != proc.NSPid || snapshot.Comm != proc.Comm {
 		t.Errorf("identity fields = %+v, want pid %d nspid %d comm %q",
-			hog, proc.PID, proc.NSPid, proc.Comm)
+			snapshot, proc.PID, proc.NSPid, proc.Comm)
 	}
-	if hog.RSSBytes != proc.RSSBytes {
-		t.Errorf("RSSBytes = %d, want %d", hog.RSSBytes, proc.RSSBytes)
+	if snapshot.RSSBytes != proc.RSSBytes {
+		t.Errorf("RSSBytes = %d, want %d", snapshot.RSSBytes, proc.RSSBytes)
 	}
-	if len(hog.Cmdline) != len(proc.Cmdline) {
-		t.Fatalf("Cmdline = %v, want %v", hog.Cmdline, proc.Cmdline)
+	if len(snapshot.Cmdline) != len(proc.Cmdline) {
+		t.Fatalf("Cmdline = %v, want %v", snapshot.Cmdline, proc.Cmdline)
 	}
 	for i := range proc.Cmdline {
-		if hog.Cmdline[i] != proc.Cmdline[i] {
-			t.Errorf("Cmdline[%d] = %q, want %q", i, hog.Cmdline[i], proc.Cmdline[i])
+		if snapshot.Cmdline[i] != proc.Cmdline[i] {
+			t.Errorf("Cmdline[%d] = %q, want %q", i, snapshot.Cmdline[i], proc.Cmdline[i])
 		}
 	}
 }

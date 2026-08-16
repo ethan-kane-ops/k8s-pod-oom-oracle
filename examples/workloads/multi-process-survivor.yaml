@@ -60,9 +60,16 @@
 #   matches your application's own logs. `pid` is the host's view of the same
 #   process and appears nowhere inside the container.
 #
-#   `hogs` is unreliable here and is not worth reading under group kill: the
-#   daemon snapshots /proc at the moment of the kill, so under containerd it
-#   catches processes that are themselves dying.
+#   `groupKill: true` says the kernel killed every process in this container
+#   rather than the one it selected, which is what containerd configures. It is
+#   false when the container really does survive, and also when the cgroup was
+#   torn down before the daemon could read it, so read false as "not observed"
+#   rather than as a promise of survival.
+#
+#   `processes` is the container's process list with the victim removed. Under
+#   group kill it is a teardown snapshot rather than a survivor list: entries are
+#   missing, and resident sizes read low or zero because the kernel is already
+#   reclaiming them. What it will never contain is the victim itself.
 apiVersion: v1
 kind: Pod
 metadata:

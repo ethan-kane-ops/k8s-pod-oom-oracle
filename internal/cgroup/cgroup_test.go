@@ -139,6 +139,81 @@ func TestReadMemoryStatsV2(t *testing.T) {
 	}
 }
 
+func TestReadOOMGroup(t *testing.T) {
+	t.Parallel()
+
+	const container = "/kubepods.slice/kubepods-burstable.slice/pod-abc/container"
+
+	tests := []struct {
+		name   string
+		root   func() fstest.MapFS
+		path   string
+		want   bool
+		wantOK bool
+	}{
+		{
+			// containerd sets this on the container scope, so the whole
+			// container dies rather than the one process the kernel picked.
+			name: "a group-killed cgroup reports true",
+			root: func() fstest.MapFS {
+				fsys := v2Fixture()
+				fsys[container[1:]+"/memory.oom.group"] = &fstest.MapFile{Data: []byte("1\n")}
+				return fsys
+			},
+			path:   container,
+			want:   true,
+			wantOK: true,
+		},
+		{
+			name: "an explicit zero reports false",
+			root: func() fstest.MapFS {
+				fsys := v2Fixture()
+				fsys[container[1:]+"/memory.oom.group"] = &fstest.MapFile{Data: []byte("0\n")}
+				return fsys
+			},
+			path:   container,
+			want:   false,
+			wantOK: true,
+		},
+		{
+			// The file arrived in 4.19. An older kernel simply does not
+			// group-kill, so its absence is an answer rather than an error.
+			name:   "an absent file reports false without erroring",
+			root:   v2Fixture,
+			path:   container,
+			want:   false,
+			wantOK: true,
+		},
+		{
+			// v1 has no equivalent and never group-kills.
+			name:   "a v1 hierarchy reports false",
+			root:   v1Fixture,
+			path:   "/kubepods/burstable/pod-abc/container",
+			want:   false,
+			wantOK: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			f, err := New(tt.root())
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			got, err := f.ReadOOMGroup(tt.path)
+			if (err == nil) != tt.wantOK {
+				t.Fatalf("ReadOOMGroup() error = %v, wantOK %v", err, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Errorf("ReadOOMGroup() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestReadMemoryStatsV2ToleratesMissingOptionalFiles(t *testing.T) {
 	t.Parallel()
 

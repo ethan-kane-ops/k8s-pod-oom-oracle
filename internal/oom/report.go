@@ -29,8 +29,11 @@ type TrajectoryPoint struct {
 	PressureFull float64 `json:"pressureFull"`
 }
 
-// HogProcess is a process that survived, listed by how much memory it holds.
-type HogProcess struct {
+// ProcessSnapshot is one process found in the container's cgroup when the
+// report was built, listed by how much memory it holds.
+//
+// Whether it survived depends on the runtime: see Report.GroupKill.
+type ProcessSnapshot struct {
 	PID      int      `json:"pid"`
 	NSPid    int      `json:"nsPid"`
 	Comm     string   `json:"comm"`
@@ -60,9 +63,20 @@ type Report struct {
 	// Trajectory is the buffered memory history leading up to the kill,
 	// oldest first. Empty when the container was not sampled for long enough.
 	Trajectory []TrajectoryPoint `json:"trajectory"`
-	// Hogs are the processes still alive in the container after the kill,
-	// heaviest first.
-	Hogs []HogProcess `json:"hogs"`
+	// Processes is the container's process list as it stood when the report was
+	// built, heaviest first, with the victim removed.
+	//
+	// This is a snapshot taken just after the kill, not a survivor list. When
+	// GroupKill is false the two are the same thing. When it is true the kernel
+	// is killing every process in the cgroup, so this is whatever was still
+	// readable mid-teardown: incomplete, and with resident sizes already
+	// collapsing towards zero.
+	Processes []ProcessSnapshot `json:"processes"`
+	// GroupKill records memory.oom.group on the cgroup this report is attributed
+	// to. True means the kernel killed the whole cgroup rather than the single
+	// process it selected, which is what containerd configures and therefore
+	// what almost every cluster does.
+	GroupKill bool `json:"groupKill"`
 	// Trend is the growth analysis over the trajectory.
 	Trend sampler.Trend `json:"trend"`
 }
@@ -93,15 +107,28 @@ func TrajectoryFrom(samples []sampler.Sample) []TrajectoryPoint {
 // free of a dependency it would otherwise need only for one constant.
 const unlimited uint64 = 1<<64 - 1
 
-// HogsFrom converts surviving processes into report entries, dropping the
-// victim if it is somehow still listed.
-func HogsFrom(procs []procfs.Process, victimPID int) []HogProcess {
-	hogs := make([]HogProcess, 0, len(procs))
+// ProcessesFrom converts a container's process list into report entries,
+// dropping the victim.
+//
+// Removing the victim is not a plain PID comparison. The eBPF probe reports the
+// kernel's global PID, while the listing comes from whichever /proc the daemon
+// can see. Those agree on a bare-metal node running with hostPID, and never
+// agree under a nested runtime such as kind, where the node is itself a
+// container: a victim at global pid 1397320 gets compared against listed pids in
+// the ten thousands, so the filter silently never fires and the report names the
+// dead process as though it were alive.
+//
+// NSPid closes the gap. The listing is already scoped to a single cgroup, so a
+// container-namespace PID identifies a process within it, and it reads the same
+// on both sides however many namespaces sit between the daemon and the kernel.
+func ProcessesFrom(procs []procfs.Process, victim detector.Victim) []ProcessSnapshot {
+	snapshot := make([]ProcessSnapshot, 0, len(procs))
+	nsMatch := victimNSPidIsUnambiguous(procs, victim.NSPid)
 	for _, proc := range procs {
-		if proc.PID == victimPID {
+		if isVictim(proc, victim, nsMatch) {
 			continue
 		}
-		hogs = append(hogs, HogProcess{
+		snapshot = append(snapshot, ProcessSnapshot{
 			PID:      proc.PID,
 			NSPid:    proc.NSPid,
 			Comm:     proc.Comm,
@@ -109,7 +136,39 @@ func HogsFrom(procs []procfs.Process, victimPID int) []HogProcess {
 			RSSBytes: proc.RSSBytes,
 		})
 	}
-	return hogs
+	return snapshot
+}
+
+// isVictim reports whether a listed process is the one the kernel killed.
+func isVictim(proc procfs.Process, victim detector.Victim, nsMatch bool) bool {
+	// The host PID is authoritative when both sides express it in the same
+	// namespace. A match here cannot be a coincidence.
+	if victim.PID != 0 && proc.PID == victim.PID {
+		return true
+	}
+	return nsMatch && victim.NSPid != 0 && proc.NSPid == victim.NSPid
+}
+
+// victimNSPidIsUnambiguous reports whether exactly one listed process carries
+// the victim's container-namespace PID.
+//
+// A cgroup normally holds one PID namespace, making NSPid unique within it. A
+// container running its own nested runtime breaks that, and there the daemon has
+// nothing to tell the two apart: the probe reports no namespace inode to compare
+// against procfs.Process.PIDNamespace. Leaving the victim in a listing is a
+// smaller error than deleting a process that is genuinely there, so an ambiguous
+// NSPid disables the fallback rather than guessing.
+func victimNSPidIsUnambiguous(procs []procfs.Process, nsPid int) bool {
+	if nsPid == 0 {
+		return false
+	}
+	var seen int
+	for _, proc := range procs {
+		if proc.NSPid == nsPid {
+			seen++
+		}
+	}
+	return seen == 1
 }
 
 // PeakRatio reports the highest usage ratio seen across the trajectory.
