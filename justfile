@@ -214,3 +214,11 @@ release bump="auto":
     git push origin "refs/tags/$new_ver"
     notes=$(git cliff --tag "$new_ver" --latest --strip header)
     gh release create "$new_ver" --title "$new_ver" --notes "$notes" --verify-tag
+
+# Serve the docs site locally with live reload
+docs-serve:
+    uv run --with-requirements docs/requirements.txt mkdocs serve
+
+# Build the static docs site into ./site (--strict fails on a broken link)
+docs-build:
+    uv run --with-requirements docs/requirements.txt mkdocs build --strict
