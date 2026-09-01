@@ -8,7 +8,7 @@
 #
 # Nothing at runtime needs this image. The generated .o and .go files are
 # committed, so `go build` works with nothing installed but Go.
-FROM golang:1.26-bookworm
+FROM golang:1.27-bookworm
 
 # clang/llvm compile the BPF C. libbpf-dev supplies bpf_helpers.h and
 # bpf_core_read.h. No bpftool: the probe declares its own kernel types instead
