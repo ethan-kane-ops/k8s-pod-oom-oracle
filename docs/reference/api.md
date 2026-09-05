@@ -157,7 +157,7 @@ interpret those as markup.
 | `peakBytes` | uint | High-water mark, from `memory.peak` where the kernel exposes it |
 | `trajectory` | array | Memory history leading up to the kill, oldest first |
 | `processes` | array | The container's process list at report time, heaviest first, victim removed |
-| `groupKill` | bool | Whether the cgroup is killed as an indivisible unit |
+| `groupKill` | bool or null | Whether the cgroup is killed as an indivisible unit. `null` when it could not be read |
 | `trend` | object | Growth analysis over the trajectory |
 
 ### `identity`
@@ -214,10 +214,11 @@ container ID in that case. See [Correlation](../correlation.md).
 | `rssBytes` | uint | Resident set size |
 
 !!! danger "This is a snapshot, not a survivor list"
-    When `groupKill` is false, the two are the same thing. When it is true the
-    kernel is killing every process in the cgroup, so this is whatever was still
-    readable mid-teardown: entries are missing, and resident sizes are already
-    collapsing towards zero.
+    Only when `groupKill` is explicitly `false` are the two the same thing. When
+    it is `true` the kernel is killing every process in the cgroup, so this is
+    whatever was still readable mid-teardown: entries are missing, and resident
+    sizes are already collapsing towards zero. When it is `null`, which of the
+    two this is was never established.
 
     What it never contains is the victim itself.
 
@@ -227,11 +228,26 @@ Reflects `memory.oom.group` on the cgroup the report is attributed to. container
 sets it on the container scope, so on almost every current cluster it is true and
 an OOM takes the whole container down.
 
-!!! warning "False means not observed"
-    False is reported both when the container genuinely survives and when the
-    daemon could not tell, because under group kill the cgroup is frequently torn
-    down before it can be read. Do not read false as a promise that anything
-    survived.
+It has three states, not two:
+
+| Value | Meaning |
+|---|---|
+| `true` | The kernel killed every process in the cgroup. The container is gone |
+| `false` | The kernel killed only the process it selected. The rest kept running |
+| `null` | The setting could not be read. Neither of the above was established |
+
+!!! warning "Do not treat `null` as `false`"
+    A JSON consumer that reads a missing or null `groupKill` as false will report
+    that a container survived a kill that nothing observed. `null` is the honest
+    answer for a cgroup that was destroyed before it could be read, which is what
+    group kill does to the container being described.
+
+Both `true` and `false` come from an actual read of `memory.oom.group`. The
+detectors take that reading as early as they can: the eBPF probe fires on entry
+to `oom_kill_process`, before SIGKILL is delivered, so it reads the cgroup while
+it still exists. The poller learns of a kill from a counter on its next pass and
+is more often left with `null`, which is the same difference in confidence that
+`victim.inferred` records.
 
 ### `trend`
 

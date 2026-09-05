@@ -32,7 +32,8 @@ type TrajectoryPoint struct {
 // ProcessSnapshot is one process found in the container's cgroup when the
 // report was built, listed by how much memory it holds.
 //
-// Whether it survived depends on the runtime: see Report.GroupKill.
+// Whether it survived depends on the runtime, and on whether that could be
+// established at all: see Report.GroupKill.
 type ProcessSnapshot struct {
 	PID      int      `json:"pid"`
 	NSPid    int      `json:"nsPid"`
@@ -66,17 +67,24 @@ type Report struct {
 	// Processes is the container's process list as it stood when the report was
 	// built, heaviest first, with the victim removed.
 	//
-	// This is a snapshot taken just after the kill, not a survivor list. When
-	// GroupKill is false the two are the same thing. When it is true the kernel
-	// is killing every process in the cgroup, so this is whatever was still
-	// readable mid-teardown: incomplete, and with resident sizes already
-	// collapsing towards zero.
+	// This is a snapshot taken just after the kill, not a survivor list. Only
+	// when GroupKill is explicitly false are the two the same thing. When it is
+	// true the kernel is killing every process in the cgroup, so this is
+	// whatever was still readable mid-teardown: incomplete, and with resident
+	// sizes already collapsing towards zero. When it is nil, which of the two
+	// this is was never established.
 	Processes []ProcessSnapshot `json:"processes"`
 	// GroupKill records memory.oom.group on the cgroup this report is attributed
 	// to. True means the kernel killed the whole cgroup rather than the single
 	// process it selected, which is what containerd configures and therefore
 	// what almost every cluster does.
-	GroupKill bool `json:"groupKill"`
+	//
+	// Nil is a third state and serialises as JSON null: the setting could not be
+	// read, because under group kill the cgroup is often destroyed before
+	// anything can look. It is deliberately not flattened into false. A reader
+	// that treats null as false concludes a container survived when nothing
+	// established that, which is the mistake this field exists to prevent.
+	GroupKill *bool `json:"groupKill"`
 	// Trend is the growth analysis over the trajectory.
 	Trend sampler.Trend `json:"trend"`
 }

@@ -150,7 +150,9 @@ type report struct {
 		NSPid int    `json:"nsPid"`
 		Comm  string `json:"comm"`
 	} `json:"processes"`
-	GroupKill bool `json:"groupKill"`
+	// Tri-state, so a nil here is "the daemon could not read memory.oom.group",
+	// which is a different claim from "the cgroup does not group-kill".
+	GroupKill *bool `json:"groupKill"`
 }
 
 func daemonStatus(t *testing.T, pod string) status {

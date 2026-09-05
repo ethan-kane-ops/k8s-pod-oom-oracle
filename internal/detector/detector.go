@@ -63,6 +63,13 @@ type KillEvent struct {
 	Victim Victim `json:"victim"`
 	// KillCount is the cgroup's cumulative oom_kill counter after this kill.
 	KillCount uint64 `json:"killCount"`
+	// GroupKill is memory.oom.group on CgroupPath, read at detection time.
+	//
+	// Nil means it could not be read, which is a third state and not a false.
+	// A detector reads this as early as it can because the flag describes a
+	// cgroup that group kill is in the middle of destroying: the one case the
+	// flag exists to describe is the one most likely to defeat a later read.
+	GroupKill *bool `json:"groupKill,omitempty"`
 	// Source is the implementation that observed the event.
 	Source Source `json:"source"`
 }

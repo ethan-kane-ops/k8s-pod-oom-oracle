@@ -174,11 +174,24 @@ func (f *FS) ReadMemoryStats(cgroupPath string) (MemoryStats, error) {
 //
 // The file is cgroup v2 only, and arrived in 4.19. A v1 hierarchy or an older
 // kernel reports false, which is correct: neither group-kills.
+//
+// A cgroup that no longer exists is an error, not a false. The distinction
+// matters more than it looks. Reading the file with readUintOptional alone maps
+// both "this kernel predates the file" and "this cgroup was destroyed" onto the
+// same false, and the second of those is precisely what group kill does to the
+// container being described. Callers would then record "did not group-kill" for
+// the case that always group-kills. The directory is therefore stat'd first, so
+// an absent file inside a live cgroup stays an answer while an absent cgroup
+// becomes an error the caller can report as unknown.
 func (f *FS) ReadOOMGroup(cgroupPath string) (bool, error) {
 	if f.version == V1 {
 		return false, nil
 	}
-	value, err := f.readUintOptional(path.Join(cleanCgroupPath(cgroupPath), "memory.oom.group"))
+	dir := cleanCgroupPath(cgroupPath)
+	if _, err := fs.Stat(f.root, dir); err != nil {
+		return false, fmt.Errorf("stat %s: %w", dir, err)
+	}
+	value, err := f.readUintOptional(path.Join(dir, "memory.oom.group"))
 	if err != nil {
 		return false, err
 	}

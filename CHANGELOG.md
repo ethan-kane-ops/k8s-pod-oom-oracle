@@ -34,15 +34,23 @@ reading `/proc` mid-teardown returned a partial set with resident sizes already
 collapsing towards zero. `processes` is what it always actually was: a snapshot
 taken just after the kill, heaviest first, with the victim removed.
 
-#### `groupKill` added to the report
+#### `groupKill` added to the report, and it is nullable
 
 `groupKill` records `memory.oom.group` on the cgroup the report is attributed
 to, so a reader can tell which of the two things the listing is.
 
-**`groupKill: false` means "not observed". It never means "the container
-survived."** The flag is false both when the container genuinely survives and
-when its cgroup was torn down before the daemon could read it, which under group
-kill is the common case. Do not build an alert on the false direction.
+It has three states. `true` means the kernel killed every process in the cgroup,
+`false` means it killed only the process it selected, and **`null` means the
+setting could not be read**, which is what group kill usually leaves behind: the
+cgroup holding the answer is destroyed along with the container.
+
+Both `true` and `false` now come from a real read, taken at detection time rather
+than when the report is assembled. Under the eBPF detector that read happens
+before SIGKILL is delivered, while the cgroup still exists.
+
+**A consumer must not treat `null` as `false`.** Doing so reports that a
+container survived a kill that nothing observed. Anything typed against this
+field needs a nullable boolean, not a boolean.
 
 ### Added
 

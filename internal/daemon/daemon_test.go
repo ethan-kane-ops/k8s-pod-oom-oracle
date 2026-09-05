@@ -360,32 +360,62 @@ func TestHandleFiltersVictimAcrossPIDNamespaces(t *testing.T) {
 }
 
 // TestHandleRecordsGroupKill covers the flag that decides whether the process
-// listing means survivors or a teardown snapshot.
+// listing means survivors, a teardown snapshot, or something never established.
 func TestHandleRecordsGroupKill(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name  string
 		setup func(*harness)
-		want  bool
+		event detector.KillEvent
+		// cgroupGone leaves the cgroup absent from the fixture entirely, as
+		// group kill leaves it by the time anything looks.
+		cgroupGone bool
+		want       *bool
 	}{
 		{
 			// containerd's default, so this is what almost every cluster does.
 			name:  "group kill is recorded when the cgroup is killed as a unit",
 			setup: func(h *harness) { h.setOOMGroup(containerCgroup, true) },
-			want:  true,
+			event: killEvent(),
+			want:  ptr(true),
 		},
 		{
 			name:  "a cgroup that kills one process reports false",
 			setup: func(h *harness) { h.setOOMGroup(containerCgroup, false) },
-			want:  false,
+			event: killEvent(),
+			want:  ptr(false),
 		},
 		{
-			// An older kernel has no such file. False here means "not observed",
-			// which is why nothing downstream claims survival from it.
-			name:  "an absent file reports false rather than failing",
+			// The file arrived in 4.19 and the cgroup is still there, so its
+			// absence is an answer: this kernel does not group-kill.
+			name:  "an absent file inside a live cgroup reports false",
 			setup: func(*harness) {},
-			want:  false,
+			event: killEvent(),
+			want:  ptr(false),
+		},
+		{
+			// The case the flag exists for is the case that destroys the
+			// evidence. Reporting false here would state that a container
+			// survived a kill that took the whole cgroup down.
+			name:       "a cgroup already torn down reports unknown, not false",
+			setup:      func(*harness) {},
+			event:      killEvent(),
+			cgroupGone: true,
+			want:       nil,
+		},
+		{
+			// The detector read this inside the pre-SIGKILL window, when the
+			// cgroup was still alive. Re-reading now would replace a fact with
+			// whatever survives teardown.
+			name:  "the detector's reading wins over a later re-read",
+			setup: func(h *harness) { h.setOOMGroup(containerCgroup, false) },
+			event: func() detector.KillEvent {
+				e := killEvent()
+				e.GroupKill = ptr(true)
+				return e
+			}(),
+			want: ptr(true),
 		},
 	}
 
@@ -394,18 +424,34 @@ func TestHandleRecordsGroupKill(t *testing.T) {
 			t.Parallel()
 
 			h := newHarness(t, testLookup())
-			h.setMemory(500<<20, 512<<20, 512<<20)
+			if tt.cgroupGone {
+				// The pod slice above it stays, so cgroup discovery still has a
+				// tree to walk. Only the container scope the kill names is gone,
+				// which is what teardown actually leaves behind.
+				h.setMemoryAt(podCgroup, 500<<20, 512<<20, 512<<20)
+			} else {
+				h.setMemory(500<<20, 512<<20, 512<<20)
+			}
 			tt.setup(h)
 			h.collect(t)
 
-			h.daemon.Handle(context.Background(), killEvent())
+			h.daemon.Handle(context.Background(), tt.event)
 
-			if got := h.latest(t).GroupKill; got != tt.want {
-				t.Errorf("GroupKill = %v, want %v", got, tt.want)
+			got := h.latest(t).GroupKill
+			switch {
+			case tt.want == nil && got != nil:
+				t.Errorf("GroupKill = %v, want unknown", *got)
+			case tt.want != nil && got == nil:
+				t.Errorf("GroupKill = unknown, want %v", *tt.want)
+			case tt.want != nil && *got != *tt.want:
+				t.Errorf("GroupKill = %v, want %v", *got, *tt.want)
 			}
 		})
 	}
 }
+
+// ptr is the shortest way to build the pointer a tri-state field needs.
+func ptr[T any](v T) *T { return &v }
 
 // TestHandleSkipsNonKubernetes is the filter that stops a host service crash
 // being attributed to somebody's pod.

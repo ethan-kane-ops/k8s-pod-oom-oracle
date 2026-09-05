@@ -62,9 +62,9 @@
 #
 #   `groupKill: true` says the kernel killed every process in this container
 #   rather than the one it selected, which is what containerd configures. It is
-#   false when the container really does survive, and also when the cgroup was
-#   torn down before the daemon could read it, so read false as "not observed"
-#   rather than as a promise of survival.
+#   false when the container really does survive, and null when the cgroup was
+#   destroyed before the daemon could read the setting. Null is not false: a
+#   reader that conflates the two reports survival that nothing observed.
 #
 #   `processes` is the container's process list with the victim removed. Under
 #   group kill it is a teardown snapshot rather than a survivor list: entries are

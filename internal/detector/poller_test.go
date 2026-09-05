@@ -204,6 +204,116 @@ func TestPollerEmitsOnCounterIncrease(t *testing.T) {
 	}
 }
 
+// TestPollerReadsGroupKillAtDetection covers the flag that tells a report
+// whether its process listing is a survivor list or a teardown snapshot.
+//
+// The poller reads it when it notices the kill rather than leaving it to report
+// assembly, which is later still. It cannot close the window the way a traced
+// kill does, so the unknown case is the one that has to stay honest: a cgroup
+// that is already gone must produce nil, never false.
+func TestPollerReadsGroupKillAtDetection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		oomGroup string
+		want     *bool
+	}{
+		{
+			// containerd's default, and the case the flag exists to describe.
+			name:     "a group-killed cgroup reports true",
+			oomGroup: "1\n",
+			want:     ptr(true),
+		},
+		{
+			name:     "a cgroup that kills one process reports false",
+			oomGroup: "0\n",
+			want:     ptr(false),
+		},
+		{
+			// The file arrived in 4.19. The cgroup is still there, so its
+			// absence is an answer rather than a failure to read.
+			name:     "an absent file inside a live cgroup reports false",
+			oomGroup: "",
+			want:     ptr(false),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture()
+			f.setCgroup(containerA, 0)
+			if tt.oomGroup != "" {
+				f.cgroups[containerA[1:]+"/memory.oom.group"] = &fstest.MapFile{
+					Data: []byte(tt.oomGroup),
+				}
+			}
+
+			p := f.newPoller(t, false)
+			if err := p.Prime(); err != nil {
+				t.Fatalf("Prime() error = %v", err)
+			}
+			if err := p.Poll(context.Background()); err != nil {
+				t.Fatalf("Poll() error = %v", err)
+			}
+
+			f.setCgroup(containerA, 1)
+			if err := p.Poll(context.Background()); err != nil {
+				t.Fatalf("Poll() error = %v", err)
+			}
+
+			got := drain(t, p.Events())
+			if len(got) != 1 {
+				t.Fatalf("Poll() emitted %d events, want 1", len(got))
+			}
+			assertGroupKill(t, got[0].GroupKill, tt.want)
+		})
+	}
+}
+
+// TestPollerReadGroupKillReportsUnknownForAVanishedCgroup exercises the branch
+// the tri-state exists for.
+//
+// It calls readGroupKill directly rather than driving a poll, because the
+// situation cannot be staged through the polling loop: detectLocked reads
+// memory.events first, so a cgroup that has fully vanished produces no event at
+// all. The real case is a race between those two reads, and what matters is that
+// the losing side yields nil. Reporting false there would state that a container
+// survived a kill that took the whole cgroup down.
+func TestPollerReadGroupKillReportsUnknownForAVanishedCgroup(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	f.setCgroup(containerA, 0)
+	p := f.newPoller(t, false)
+
+	if got := p.readGroupKill(containerA + "-torn-down"); got != nil {
+		t.Errorf("readGroupKill() = %v, want unknown: nothing read the file", *got)
+	}
+	if got := p.readGroupKill(containerA); got == nil || *got {
+		t.Errorf("readGroupKill() on a live cgroup = %v, want false", got)
+	}
+}
+
+// assertGroupKill compares two tri-states and names the state in the failure.
+func assertGroupKill(t *testing.T, got, want *bool) {
+	t.Helper()
+
+	switch {
+	case want == nil && got != nil:
+		t.Errorf("GroupKill = %v, want unknown", *got)
+	case want != nil && got == nil:
+		t.Errorf("GroupKill = unknown, want %v", *want)
+	case want != nil && *got != *want:
+		t.Errorf("GroupKill = %v, want %v", *got, *want)
+	}
+}
+
+// ptr is the shortest way to build the pointer a tri-state field needs.
+func ptr[T any](v T) *T { return &v }
+
 func TestPollerEmitsPerCgroup(t *testing.T) {
 	t.Parallel()
 
