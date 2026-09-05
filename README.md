@@ -12,6 +12,8 @@ in the container when it happened.
 
 **📖 [Full documentation](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/)**
 
+![oom-oracle explaining an OOM kill and browsing a node's kills live](docs/assets/demo.gif)
+
 ---
 
 ## The problem

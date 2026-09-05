@@ -256,6 +256,77 @@ func TestMultiProcessContainerNamesTheVictim(t *testing.T) {
 	}
 }
 
+// TestGradualLeakProducesATrajectory is the only real-kernel coverage the
+// trajectory and the trend analysis have.
+//
+// Every other workload in examples/workloads allocates faster than the sampler
+// runs, so their trajectories are flat and prove only that sampling happened.
+// A container that climbs a megabyte at a time for a minute is the case the
+// feature exists for, and until this workload existed nothing produced one
+// outside a fixture.
+//
+// The assertions are deliberately loose about numbers and strict about shape.
+// The exact rate depends on how busy the runner is, but a climb has to end
+// higher than it started, span more than a handful of samples, and fit a line
+// well enough for timeToLimit to mean anything.
+func TestGradualLeakProducesATrajectory(t *testing.T) {
+	const (
+		name = "oom-gradual-leak"
+		// From gradual-leak.yaml. The container writes a megabyte every 400ms.
+		limitBytes = 128 << 20
+	)
+	daemon := daemonPod(t)
+	before := len(daemonReports(t, daemon))
+
+	t.Cleanup(func() { deletePod(t, name) })
+	applyPod(t, example(t, "gradual-leak.yaml"))
+
+	uid := waitForPodUID(t, name)
+	waitForPodStarted(t, name)
+	// The climb itself is most of a minute, so this waits far longer than the
+	// other tests. A shorter timeout here would fail on a slow runner while the
+	// workload was still working correctly.
+	found := waitForReportWithin(t, daemon, name, before, uid, 3*time.Minute)
+
+	if found.LimitBytes != limitBytes {
+		t.Errorf("limitBytes = %d, want %d from the manifest", found.LimitBytes, limitBytes)
+	}
+
+	// A flat trajectory here means the sampler never caught the climb, which
+	// would make the whole feature unproven on a real kernel.
+	if len(found.Trajectory) < 8 {
+		t.Fatalf("trajectory has %d samples, want at least 8: a leak this slow must "+
+			"be sampled many times on the way up", len(found.Trajectory))
+	}
+	first := found.Trajectory[0]
+	last := found.Trajectory[len(found.Trajectory)-1]
+	if last.UsedBytes <= first.UsedBytes {
+		t.Errorf("trajectory ends at %d bytes having started at %d; it must climb",
+			last.UsedBytes, first.UsedBytes)
+	}
+
+	trend := found.Trend
+	if trend.BytesPerSecond <= 0 {
+		t.Errorf("trend.bytesPerSecond = %f, want positive growth", trend.BytesPerSecond)
+	}
+	// A straight line fits well. This is the field that separates "leaking" from
+	// "had one bad second", and timeToLimit is only meaningful when it is high.
+	if trend.RSquared < 0.7 {
+		t.Errorf("trend.rSquared = %f, want a good linear fit for a steady leak", trend.RSquared)
+	}
+	if !trend.Projected {
+		t.Error("trend.projected is false; a steady climb towards a limit is exactly " +
+			"the case where timeToLimit should be computed")
+	}
+
+	assertVictimFiltered(t, found)
+	assertResolved(t, found, name, "leaker")
+
+	t.Logf("report: victim=%s samples=%d first=%dB last=%dB rate=%.0fB/s r2=%.2f timeToLimit=%s",
+		found.Victim.Comm, len(found.Trajectory), first.UsedBytes, last.UsedBytes,
+		trend.BytesPerSecond, trend.RSquared, time.Duration(trend.TimeToLimit))
+}
+
 // TestPodLevelBreachIsReported covers an OOM kill charged to the pod slice
 // rather than to a container.
 //
@@ -382,11 +453,22 @@ func waitForPodUID(t *testing.T, name string) string {
 func waitForReport(t *testing.T, daemon, podName string, before int, uid string) report {
 	t.Helper()
 
+	return waitForReportWithin(t, daemon, podName, before, uid, oomTimeout)
+}
+
+// waitForReportWithin is waitForReport with an explicit deadline, for a workload
+// that is meant to take a while. A leak that climbs for a minute would otherwise
+// fail the default timeout while working exactly as intended.
+func waitForReportWithin(
+	t *testing.T, daemon, podName string, before int, uid string, timeout time.Duration,
+) report {
+	t.Helper()
+
 	var found report
 	// The pod's own state is attached to the timeout because the two
 	// explanations for a missing report look identical from here: the daemon
 	// saw no kill, or the workload never produced one.
-	eventuallyDiag(t, oomTimeout, "an OOM report for pod uid "+uid, func() error {
+	eventuallyDiag(t, timeout, "an OOM report for pod uid "+uid, func() error {
 		reports := daemonReports(t, daemon)
 		for _, candidate := range reports {
 			if candidate.Identity.PodUID == uid {

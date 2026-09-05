@@ -100,6 +100,7 @@ kubectl apply -f examples/workloads/single-process-killed.yaml
 | Workload | What it demonstrates |
 |---|---|
 | `single-process-killed.yaml` | The simplest case: one process, one limit, one kill |
+| `gradual-leak.yaml` | A slow leak: the only sample that produces a real memory curve and a meaningful `trend` |
 | `multi-process-survivor.yaml` | Which of several processes the kernel chose, and the `memory.oom.group` split |
 | `worker-pool.yaml` | A pool of identical workers where only the report can say which one died |
 | `jvm-heap-overrun.yaml` | A heap that outgrows the container limit rather than the JVM's own |

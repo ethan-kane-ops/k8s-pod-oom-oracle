@@ -250,6 +250,31 @@ release-snapshot:
 release-check:
     goreleaser check
 
+[doc("Record the README demo GIF into docs/assets/")]
+demo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v vhs >/dev/null || { echo "✗ vhs not installed: brew install vhs"; exit 1; }
+    just build
+    mkdir -p docs/assets
+    # The replay server stands in for a daemon so the recording is reproducible.
+    # A live daemon needs a cluster, and its kills differ every run in timing,
+    # PIDs and trajectory shape, so the GIF would change on every rebuild for
+    # reasons nobody chose.
+    python3 hack/demo/serve.py --port 9090 &
+    server=$!
+    trap 'kill $server 2>/dev/null || true' EXIT
+    for _ in $(seq 20); do
+      curl -sf http://127.0.0.1:9090/healthz >/dev/null && break
+      sleep 0.2
+    done
+    vhs hack/demo.tape
+    echo "✓ docs/assets/demo.gif (380K)"
+
+[doc("Replay the captured demo reports on :9090, as a daemon would serve them")]
+demo-serve:
+    python3 hack/demo/serve.py
+
 [doc("Lint the Helm chart and check every flag it renders exists")]
 chart-lint:
     helm lint charts/{{binary}}

@@ -1,0 +1,14 @@
+{
+  "detector": "ebpf",
+  "cgroupVersion": "v2",
+  "ready": true,
+  "reports": 4,
+  "skipped": 0,
+  "unattributed": 0,
+  "trackedCgroups": 56,
+  "uptimeSeconds": 4517.0,
+  "version": "v0.1.0",
+  "node": "ip-10-0-3-42.eu-west-2.compute.internal",
+  "podCacheSynced": true,
+  "podsTracked": 17
+}
