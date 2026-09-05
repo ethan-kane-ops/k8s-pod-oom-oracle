@@ -142,11 +142,11 @@ Pre-release. No version has been tagged, so `main` is the only thing to run and
 the HTTP API and report JSON may still change shape.
 
 Working today: both detectors, cgroup v1 and v2 sampling, pod-name correlation,
-the HTTP API, the text and JSON renderers, and an e2e suite that runs on kind in
-CI.
+the HTTP API, the text and JSON renderers, the `oom-oracle watch` dashboard, a
+Helm chart, and an e2e suite that runs on kind in CI.
 
-Not built yet: an interactive TUI dashboard, a Helm chart and Artifact Hub
-listing, and published multi-arch signed releases.
+The release pipeline is in place but no tag has been cut, so nothing is
+published to pull yet. An Artifact Hub listing follows the first release.
 
 The project's [ROADMAP](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/blob/main/ROADMAP.md)
 has the full picture, including the known limitations worth reading before you

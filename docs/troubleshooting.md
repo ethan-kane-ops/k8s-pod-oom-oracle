@@ -25,17 +25,35 @@ reads kernel structs through CO-RE and cannot relocate without it. See
 ### Capabilities were lost on a non-root UID
 
 This one is silent and easy to miss. A non-root process starts with an **empty
-effective capability set** regardless of how permissive its bounding set is, so
-`bpf()` returns `EPERM` even under `privileged: true`.
+effective capability set** regardless of how permissive its bounding set is, and
+populating it needs ambient capabilities, which a pod spec cannot request. So
+`bpf()` returns `EPERM` whatever capabilities were added, and it would return
+`EPERM` under `privileged: true` too.
 
 The distroless base image runs as non-root, so the DaemonSet sets `runAsUser: 0`
-explicitly. If you have templated that away, this is your cause.
+explicitly. If you have templated that away, or dropped either capability, this
+is your cause.
 
 ```yaml
 securityContext:
-  privileged: true
   runAsUser: 0
+  capabilities:
+    drop: [ALL]
+    add: [BPF, PERFMON]
 ```
+
+`CAP_BPF` loads the program and `CAP_PERFMON` attaches the kprobe. Losing only
+`CAP_PERFMON` is the confusing case: the program loads and the attach is what
+fails.
+
+### The process listing is empty on every report
+
+The daemon reads cgroup membership from `cgroup.procs` in the mounted cgroupfs.
+If it is reading `/proc/<pid>/cgroup` instead, on a fork or an older build, an
+unprivileged pod matches nothing at all: that file is written relative to the
+*reading* process's cgroup namespace, and containerd puts a container that is
+not `privileged: true` in a private one. Nothing errors; reports simply arrive
+with no processes in them.
 
 ### The kernel is older than 5.8
 
