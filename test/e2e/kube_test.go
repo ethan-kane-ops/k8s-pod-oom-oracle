@@ -272,8 +272,23 @@ var errTerminal = errors.New("terminal")
 // applyPod creates a pod from a manifest. It does not wait for anything: the
 // API server accepts the object long before the pod is scheduled, let alone
 // running. Callers that need a started container use waitForPodStarted.
+// applyPod creates the workload, replacing any pod already using its name.
+//
+// The replace matters. These manifests are the published samples, and the docs
+// tell a reader to `kubectl apply` them by hand. A pod left behind from that, or
+// from an interrupted run, is already dead: `apply` would keep it, since almost
+// nothing in a pod spec is mutable, and the suite would then wait for a
+// container that terminated an hour ago. The failure looks like a missed kill
+// and is not one.
 func applyPod(t *testing.T, manifest string) {
 	t.Helper()
+
+	// Ignore the result: not existing is the normal case, and a real failure to
+	// delete surfaces as the apply below failing.
+	del := exec.Command("kubectl", "delete", "-n", workloadNamespace,
+		"-f", "-", "--ignore-not-found", "--wait", "--timeout=60s")
+	del.Stdin = strings.NewReader(manifest)
+	_ = del.Run()
 
 	cmd := exec.Command("kubectl", "apply", "-n", workloadNamespace, "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)
