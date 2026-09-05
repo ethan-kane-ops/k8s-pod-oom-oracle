@@ -1,0 +1,105 @@
+# goreleaser builds the CLI archives for a tagged release.
+#
+# The container image is NOT built here. It is built by docker/build-push-action
+# in .github/workflows/release.yml, which already produces a multi-arch manifest
+# with an SBOM and provenance attached, and which the Helm chart and the
+# DaemonSet both point at. Having goreleaser build a second image would give two
+# images per tag built two different ways.
+#
+# Release notes come from CHANGELOG.md rather than from goreleaser's own commit
+# grouping. A commit subject cannot say which JSON field a consumer has to
+# rename, and that note is the reason the changelog is hand-written above the
+# generated sections.
+version: 2
+
+project_name: oom-oracle
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod verify
+
+builds:
+  - id: oom-oracle
+    main: ./cmd/oom-oracle
+    binary: oom-oracle
+    env:
+      # The eBPF objects are committed and loaded from an embedded byte slice,
+      # so nothing here needs cgo. A static binary also runs on any distro the
+      # node happens to use.
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/version.version={{ .Version }}
+      - -X github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/version.commit={{ .FullCommit }}
+      - -X github.com/ethan-kane-ops/k8s-pod-oom-oracle/internal/version.date={{ .CommitDate }}
+    goos:
+      - linux
+      - darwin
+      # The daemon is Linux-only and says so when started elsewhere. `inspect`
+      # and `watch` are HTTP clients and work anywhere, which is the whole
+      # reason to ship a darwin and windows build: the person reading a report
+      # is rarely on the node.
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: oom-oracle
+    ids:
+      - oom-oracle
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  # One SPDX document per archive. Attached to the release beside it, so a
+  # consumer can see what is in a binary without unpacking and scanning it.
+  - id: archives
+    artifacts: archive
+
+# Signing is keyless: cosign takes an OIDC token from the GitHub Actions
+# workflow, so there is no private key to hold, rotate or leak. Verification
+# needs the identity and issuer rather than a public key, which SECURITY.md
+# documents.
+signs:
+  - id: checksums
+    cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - --yes
+      - ${artifact}
+    artifacts: checksum
+    output: true
+
+release:
+  github:
+    owner: ethan-kane-ops
+    name: k8s-pod-oom-oracle
+  # Notes are supplied with --release-notes from CHANGELOG.md. An empty
+  # changelog block here stops goreleaser appending its own commit list
+  # underneath them.
+  mode: replace
+  prerelease: auto
+
+changelog:
+  disable: true

@@ -54,6 +54,7 @@ nav:
   - Troubleshooting: troubleshooting.md
   - Security: security.md
   - Development: development.md
+  - Releasing: releasing.md
   - API Reference: reference/api.md
   - Changelog: changelog.md
 

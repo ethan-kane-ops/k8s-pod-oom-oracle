@@ -117,6 +117,7 @@ in [`examples/workloads/`](examples/workloads/).
 | [Troubleshooting](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/troubleshooting/) | When the probe will not attach, and what the counters mean |
 | [Security](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/security/) | Threat model, the capabilities it asks for, what the probe reads |
 | [Development](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/development/) | Build, eBPF regeneration, the e2e suite |
+| [Releasing](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/releasing/) | What a tag publishes, and how to cut one |
 
 ---
 
@@ -129,8 +130,9 @@ Working today: both detectors, cgroup v1 and v2 sampling, pod-name correlation,
 the HTTP API, the text and JSON renderers, the terminal dashboard, and an e2e
 suite that runs on kind in CI.
 
-Not built yet: a Helm chart and Artifact Hub listing, and published multi-arch
-signed releases.
+The release pipeline is in place but no tag has been cut, so there is still no
+published image or archive to install. A Helm chart and Artifact Hub listing are
+the remaining gap.
 
 [ROADMAP.md](./ROADMAP.md) has the full picture, including the known limitations
 worth reading before you deploy this on anything you care about.

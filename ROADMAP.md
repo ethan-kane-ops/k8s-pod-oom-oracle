@@ -26,15 +26,14 @@ What works end to end, verified on a real kernel rather than fixtures:
 
 ## Next: reaching a first release
 
-1. **Terminal dashboard**, a live view rather than one report at a time.
-2. **Release pipeline**: goreleaser, multi-arch images, cosign signing and an
-   SBOM. Until this lands, [SECURITY.md](./SECURITY.md) cannot promise verifiable
-   artifacts, and it does not.
-3. **Helm chart**, published to Artifact Hub.
+1. **Helm chart**, published to Artifact Hub.
+2. **Cut the first tag.** The pipeline is in place; nothing has been released.
 
 Shipped since this list was written: runnable
-[example workloads](./examples/), and a
-[documentation site](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/).
+[example workloads](./examples/), a
+[documentation site](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/), the
+`oom-oracle watch` terminal dashboard, and a release pipeline producing
+multi-arch images and CLI archives, cosign-signed with an SBOM.
 
 ## Known limitations, and what would fix them
 
