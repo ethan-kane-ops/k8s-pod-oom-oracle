@@ -225,7 +225,11 @@ release bump="auto":
     trap 'rm -f "$gen"' EXIT
     git cliff --tag "$new_ver" --unreleased > "$gen"
     ./hack/changelog-release.sh "$new_ver" "$gen" CHANGELOG.md
-    git add CHANGELOG.md
+    # The chart carries the version three times and the workflow rejects the
+    # release if any disagrees with the tag, having already pushed the image by
+    # then. Set them here so the bump cannot be forgotten.
+    ./hack/chart-version.sh "$new_ver"
+    git add CHANGELOG.md charts/oom-oracle/Chart.yaml
     git diff --cached --quiet || git commit -m "chore(release): $new_ver"
     # Prove the notes exist before the tag goes out. The Release workflow runs
     # this same script and fails on an empty section, and a tag is far harder to
@@ -285,6 +289,28 @@ chart-lint:
 # Render the chart to stdout, as `helm install` would apply it
 chart-template *args:
     helm template {{binary}} charts/{{binary}} {{args}}
+
+# Claim the Artifact Hub listing. One-off, and only after the repository has
+# been added there: Artifact Hub issues the ID this pushes back to it.
+[doc("Push Artifact Hub ownership metadata to the chart's OCI repository")]
+chart-claim:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    meta=charts/{{binary}}/artifacthub-repo.yml
+    id=$(awk '/^repositoryID:/ {print $2}' "$meta" | tr -d '"')
+    email=$(awk '/^ *email:/ {print $2}' "$meta" | tr -d '"')
+    if [ -z "$id" ] || [ -z "$email" ]; then
+      echo "✗ $meta is not filled in yet"
+      echo "  Add the repository on artifacthub.io, then copy its ID and the"
+      echo "  account's email in. Both are published to a public registry."
+      exit 1
+    fi
+    # A separate artifact on the chart's repository under a fixed tag, which is
+    # where Artifact Hub looks. It is not part of the chart and .helmignore
+    # keeps it out of the package.
+    oras push "ghcr.io/ethan-kane-ops/charts/{{binary}}:artifacthub.io" \
+      --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+      "${meta}:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
 
 [doc("Install the chart into the kind cluster and prove the probe attaches")]
 chart-e2e: e2e-deploy

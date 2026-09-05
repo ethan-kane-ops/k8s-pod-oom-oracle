@@ -1,0 +1,24 @@
+# Artifact Hub repository metadata.
+#
+# Not part of the chart. It is pushed to the OCI registry as a separate
+# artifact so Artifact Hub can prove the listing belongs to this project, which
+# is what turns it into a verified publisher.
+#
+# The order is not obvious: repositoryID is issued by Artifact Hub when the
+# repository is added there, so the listing has to exist before this file can be
+# filled in and pushed. See docs/releasing.md.
+#
+# Both fields below are published to a public registry and are readable by
+# anyone. The email has to match the one on the Artifact Hub account, because
+# that match is the ownership check; it cannot be a noreply alias unless the
+# account uses one too.
+#
+# `just chart-claim` pushes it once both are set.
+
+repositoryID: ""
+
+owners:
+  - name: ethan-kane-ops
+    email: ""
+
+ignore: []

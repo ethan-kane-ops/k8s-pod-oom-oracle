@@ -108,18 +108,22 @@ gh attestation verify oci://ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:v0.1.0 \
 
 ### The CLI archives
 
-The checksum file is signed, and the archives are covered by it:
+The checksum file is signed, and the archives are covered by it. Download
+`checksums.txt` and `checksums.txt.bundle` from the release:
 
 ```bash
 cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
+  --bundle checksums.txt.bundle \
   --certificate-identity-regexp '^https://github\.com/ethan-kane-ops/k8s-pod-oom-oracle/\.github/workflows/release\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 
 sha256sum --check --ignore-missing checksums.txt
 ```
+
+The bundle holds the signature, the signing certificate and the transparency
+log entry in one file. Releases before v0.1.1 are not signed at all: v0.1.0's
+signing step failed, so that tag published an image and a chart but no archives.
 
 Verify the checksum file first. Checking an archive against an unverified
 checksum file proves only that the two came from the same place.

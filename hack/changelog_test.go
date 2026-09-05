@@ -275,26 +275,56 @@ func TestReleaseNotesRejectsAMissingVersion(t *testing.T) {
 // TestTheRealChangelogReleasesCleanly runs the scripts against the checked-in
 // CHANGELOG.md. The fixtures above are small enough to be wrong in the same way
 // twice; this one fails if the file people actually edit stops being releasable.
+//
+// It asserts the invariant rather than any particular note: everything written
+// under [Unreleased] reaches the release notes. Naming the notes themselves
+// would only pin whichever release was current when the test was written, and
+// the version has to be one the changelog does not already carry.
 func TestTheRealChangelogReleasesCleanly(t *testing.T) {
+	const version = "v9.9.9"
+
 	dir := t.TempDir()
 	source, err := filepath.Abs(filepath.Join("..", "CHANGELOG.md"))
 	if err != nil {
 		t.Fatalf("resolve CHANGELOG.md: %v", err)
 	}
-	changelog := write(t, dir, "CHANGELOG.md", read(t, source))
-	generated := write(t, dir, "generated.md", generatedSection)
+	original := read(t, source)
+	changelog := write(t, dir, "CHANGELOG.md", original)
+	generated := write(t, dir, "generated.md",
+		strings.Replace(generatedSection, "0.1.0", "9.9.9", 1))
 
-	mustRun(t, "changelog-release.sh", "v0.1.0", generated, changelog)
-	notes := mustRun(t, "release-notes.sh", "v0.1.0", changelog)
+	mustRun(t, "changelog-release.sh", version, generated, changelog)
+	notes := mustRun(t, "release-notes.sh", version, changelog)
 
-	// Both breaking changes have to reach the release notes. Neither can be
-	// reconstructed from a commit subject, which is the whole reason the
-	// notes are hand-written.
-	for _, want := range []string{"hogs", "groupKill"} {
-		if !strings.Contains(notes, want) {
-			t.Errorf("release notes never mention %q\n%s", want, notes)
+	for _, line := range unreleasedBody(original) {
+		if !strings.Contains(notes, line) {
+			t.Errorf("release notes dropped a hand-written line:\n  %s", line)
 		}
 	}
+
+	// The generated groups have to arrive too, under the same heading.
+	if !strings.Contains(notes, "### Features") {
+		t.Errorf("release notes carry no generated groups\n%s", notes)
+	}
+}
+
+// unreleasedBody returns the non-blank lines written under [Unreleased].
+func unreleasedBody(changelog string) []string {
+	var body []string
+	inside := false
+	for _, line := range strings.Split(changelog, "\n") {
+		if strings.HasPrefix(line, "## [") {
+			if inside {
+				break
+			}
+			inside = strings.HasPrefix(line, "## [Unreleased]")
+			continue
+		}
+		if inside && strings.TrimSpace(line) != "" {
+			body = append(body, line)
+		}
+	}
+	return body
 }
 
 func assertOrder(t *testing.T, got string, want []string) {
