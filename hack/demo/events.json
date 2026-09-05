@@ -1,0 +1,489 @@
+[
+  {
+    "id": "20260905T162253Z-4",
+    "time": "2026-09-05T16:22:53.281287966Z",
+    "identity": {
+      "podUID": "4e5ecbf5-10bd-42a8-b92f-c799a73fb9e4",
+      "containerID": "8c0f342a6a0e20f76856e5a51bef0c25fe3a644bb225df55e6950042fe075e5e",
+      "kind": "container",
+      "qos": "Burstable",
+      "driver": "systemd",
+      "runtime": "containerd",
+      "cgroupPath": "/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/kubelet-kubepods-burstable-pod4e5ecbf5_10bd_42a8_b92f_c799a73fb9e4.slice/cri-containerd-8c0f342a6a0e20f76856e5a51bef0c25fe3a644bb225df55e6950042fe075e5e.scope",
+      "namespace": "production",
+      "podName": "checkout-api-7f9d2c",
+      "containerName": "server",
+      "image": "checkout:v4.2.1",
+      "resolved": true
+    },
+    "victim": {
+      "pid": 1217258,
+      "nsPid": 1,
+      "comm": "sh",
+      "rssBytes": 133382144,
+      "inferred": false,
+      "known": true
+    },
+    "source": "ebpf",
+    "killCount": 2,
+    "limitBytes": 134217728,
+    "peakBytes": 134217728,
+    "trajectory": [
+      {
+        "time": "2026-09-05T16:22:22.397819962Z",
+        "usedBytes": 1908736,
+        "limitBytes": 134217728,
+        "ratio": 0.01422119140625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:23.400301867Z",
+        "usedBytes": 1908736,
+        "limitBytes": 134217728,
+        "ratio": 0.01422119140625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:24.401552966Z",
+        "usedBytes": 1908736,
+        "limitBytes": 134217728,
+        "ratio": 0.01422119140625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:25.398221721Z",
+        "usedBytes": 4096000,
+        "limitBytes": 134217728,
+        "ratio": 0.030517578125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:26.399863688Z",
+        "usedBytes": 6197248,
+        "limitBytes": 134217728,
+        "ratio": 0.046173095703125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:27.398709166Z",
+        "usedBytes": 9347072,
+        "limitBytes": 134217728,
+        "ratio": 0.06964111328125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:28.400742286Z",
+        "usedBytes": 11444224,
+        "limitBytes": 134217728,
+        "ratio": 0.08526611328125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:29.399566429Z",
+        "usedBytes": 13553664,
+        "limitBytes": 134217728,
+        "ratio": 0.100982666015625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:30.399574392Z",
+        "usedBytes": 16703488,
+        "limitBytes": 134217728,
+        "ratio": 0.12445068359375,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:31.400556757Z",
+        "usedBytes": 18808832,
+        "limitBytes": 134217728,
+        "ratio": 0.14013671875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:32.400469552Z",
+        "usedBytes": 25010176,
+        "limitBytes": 134217728,
+        "ratio": 0.18634033203125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:33.398263368Z",
+        "usedBytes": 24059904,
+        "limitBytes": 134217728,
+        "ratio": 0.17926025390625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:34.399830662Z",
+        "usedBytes": 26161152,
+        "limitBytes": 134217728,
+        "ratio": 0.194915771484375,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:35.40075065Z",
+        "usedBytes": 28262400,
+        "limitBytes": 134217728,
+        "ratio": 0.2105712890625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:36.400436041Z",
+        "usedBytes": 31412224,
+        "limitBytes": 134217728,
+        "ratio": 0.234039306640625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:37.399076394Z",
+        "usedBytes": 33509376,
+        "limitBytes": 134217728,
+        "ratio": 0.249664306640625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:38.400352869Z",
+        "usedBytes": 35606528,
+        "limitBytes": 134217728,
+        "ratio": 0.265289306640625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:39.397728535Z",
+        "usedBytes": 49381376,
+        "limitBytes": 134217728,
+        "ratio": 0.367919921875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:40.397441781Z",
+        "usedBytes": 40869888,
+        "limitBytes": 134217728,
+        "ratio": 0.30450439453125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:41.404159604Z",
+        "usedBytes": 42958848,
+        "limitBytes": 134217728,
+        "ratio": 0.320068359375,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:42.400278067Z",
+        "usedBytes": 45064192,
+        "limitBytes": 134217728,
+        "ratio": 0.33575439453125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:43.401636186Z",
+        "usedBytes": 47173632,
+        "limitBytes": 134217728,
+        "ratio": 0.351470947265625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:44.397153464Z",
+        "usedBytes": 50462720,
+        "limitBytes": 134217728,
+        "ratio": 0.3759765625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:45.397283962Z",
+        "usedBytes": 52416512,
+        "limitBytes": 134217728,
+        "ratio": 0.390533447265625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:46.399919964Z",
+        "usedBytes": 54521856,
+        "limitBytes": 134217728,
+        "ratio": 0.406219482421875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:47.400568746Z",
+        "usedBytes": 56631296,
+        "limitBytes": 134217728,
+        "ratio": 0.42193603515625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:48.399436167Z",
+        "usedBytes": 58724352,
+        "limitBytes": 134217728,
+        "ratio": 0.437530517578125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:49.395636557Z",
+        "usedBytes": 90320896,
+        "limitBytes": 134217728,
+        "ratio": 0.672943115234375,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:50.397851227Z",
+        "usedBytes": 63983616,
+        "limitBytes": 134217728,
+        "ratio": 0.476715087890625,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:51.397541541Z",
+        "usedBytes": 66084864,
+        "limitBytes": 134217728,
+        "ratio": 0.49237060546875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:22:52.397962116Z",
+        "usedBytes": 68177920,
+        "limitBytes": 134217728,
+        "ratio": 0.507965087890625,
+        "pressureFull": 0
+      }
+    ],
+    "processes": [],
+    "victimMatch": "nsPid",
+    "groupKill": true,
+    "trend": {
+      "bytesPerSecond": 2482479.3684387812,
+      "rSquared": 0.9449804134979433,
+      "samples": 31,
+      "window": 30000142195,
+      "timeToLimit": 26602359254,
+      "projected": true
+    }
+  },
+  {
+    "id": "20260905T162000Z-3",
+    "time": "2026-09-05T16:20:00.728850623Z",
+    "identity": {
+      "podUID": "a3bf9166-1145-4142-b7c2-0ac165284de1",
+      "containerID": "18359f341aa27707d303e3226f5b4a70148a264d419abc8f62541ca8f144d9f4",
+      "kind": "container",
+      "qos": "Burstable",
+      "driver": "systemd",
+      "runtime": "containerd",
+      "cgroupPath": "/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/kubelet-kubepods-burstable-poda3bf9166_1145_4142_b7c2_0ac165284de1.slice/cri-containerd-18359f341aa27707d303e3226f5b4a70148a264d419abc8f62541ca8f144d9f4.scope",
+      "namespace": "production",
+      "podName": "image-resizer-4c8b1a",
+      "containerName": "resizer",
+      "image": "resizer:v3.1",
+      "resolved": true
+    },
+    "victim": {
+      "pid": 1215890,
+      "nsPid": 15,
+      "comm": "tail",
+      "rssBytes": 133300224,
+      "inferred": false,
+      "known": true
+    },
+    "source": "ebpf",
+    "killCount": 3,
+    "limitBytes": 134217728,
+    "peakBytes": 134209536,
+    "trajectory": [
+      {
+        "time": "2026-09-05T16:19:58.399820018Z",
+        "usedBytes": 1925120,
+        "limitBytes": 134217728,
+        "ratio": 0.01434326171875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:59.399582727Z",
+        "usedBytes": 1925120,
+        "limitBytes": 134217728,
+        "ratio": 0.01434326171875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:20:00.397728664Z",
+        "usedBytes": 1925120,
+        "limitBytes": 134217728,
+        "ratio": 0.01434326171875,
+        "pressureFull": 0
+      }
+    ],
+    "processes": [],
+    "victimMatch": "nsPid",
+    "groupKill": true,
+    "trend": {
+      "bytesPerSecond": 0,
+      "rSquared": 1,
+      "samples": 3,
+      "window": 1997908604,
+      "timeToLimit": 0,
+      "projected": false
+    }
+  },
+  {
+    "id": "20260905T161914Z-2",
+    "time": "2026-09-05T16:19:14.532612588Z",
+    "identity": {
+      "podUID": "c0fd3cbc-79af-473b-878a-84b9f2baee8e",
+      "containerID": "c81e2a280696a14564bac51ef9db61cb9a5cbb021b835bdc4a715e11a17f97c0",
+      "kind": "container",
+      "qos": "Burstable",
+      "driver": "systemd",
+      "runtime": "containerd",
+      "cgroupPath": "/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/kubelet-kubepods-burstable-podc0fd3cbc_79af_473b_878a_84b9f2baee8e.slice/cri-containerd-c81e2a280696a14564bac51ef9db61cb9a5cbb021b835bdc4a715e11a17f97c0.scope",
+      "namespace": "production",
+      "podName": "payment-api-6d5f78",
+      "containerName": "web-server",
+      "image": "payment:v1.2.0",
+      "resolved": true
+    },
+    "victim": {
+      "pid": 1215314,
+      "nsPid": 19,
+      "comm": "tail",
+      "rssBytes": 535035904,
+      "inferred": false,
+      "known": true
+    },
+    "source": "ebpf",
+    "killCount": 2,
+    "limitBytes": 536870912,
+    "peakBytes": 536870912,
+    "trajectory": [
+      {
+        "time": "2026-09-05T16:19:09.399153095Z",
+        "usedBytes": 2232320,
+        "limitBytes": 536870912,
+        "ratio": 0.00415802001953125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:10.404572Z",
+        "usedBytes": 2232320,
+        "limitBytes": 536870912,
+        "ratio": 0.00415802001953125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:11.39707771Z",
+        "usedBytes": 2232320,
+        "limitBytes": 536870912,
+        "ratio": 0.00415802001953125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:12.400251129Z",
+        "usedBytes": 2232320,
+        "limitBytes": 536870912,
+        "ratio": 0.00415802001953125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:13.402567938Z",
+        "usedBytes": 2232320,
+        "limitBytes": 536870912,
+        "ratio": 0.00415802001953125,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:14.396076431Z",
+        "usedBytes": 484880384,
+        "limitBytes": 536870912,
+        "ratio": 0.9031600952148438,
+        "pressureFull": 0
+      }
+    ],
+    "processes": [],
+    "victimMatch": "nsPid",
+    "groupKill": true,
+    "trend": {
+      "bytesPerSecond": 68914450.4559547,
+      "rSquared": 0.42768853102737614,
+      "samples": 6,
+      "window": 4996923378,
+      "timeToLimit": 754421281,
+      "projected": true
+    }
+  },
+  {
+    "id": "20260905T161914Z-1",
+    "time": "2026-09-05T16:19:14.387476782Z",
+    "identity": {
+      "podUID": "530014b2-d590-4d52-98fd-cdce4d8d206e",
+      "containerID": "9dadb54d11fe7ce24ce9c1498ca6059bffa93488c9c8402cb5bb36f75b82ae7c",
+      "kind": "container",
+      "qos": "Burstable",
+      "driver": "systemd",
+      "runtime": "containerd",
+      "cgroupPath": "/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-burstable.slice/kubelet-kubepods-burstable-pod530014b2_d590_4d52_98fd_cdce4d8d206e.slice/cri-containerd-9dadb54d11fe7ce24ce9c1498ca6059bffa93488c9c8402cb5bb36f75b82ae7c.scope",
+      "namespace": "production",
+      "podName": "batch-worker-99fabc",
+      "containerName": "pool",
+      "image": "batch:2026.8",
+      "resolved": true
+    },
+    "victim": {
+      "pid": 1215315,
+      "nsPid": 18,
+      "comm": "tail",
+      "rssBytes": 267517952,
+      "inferred": false,
+      "known": true
+    },
+    "source": "ebpf",
+    "killCount": 6,
+    "limitBytes": 268435456,
+    "peakBytes": 268423168,
+    "trajectory": [
+      {
+        "time": "2026-09-05T16:19:09.399153095Z",
+        "usedBytes": 843776,
+        "limitBytes": 268435456,
+        "ratio": 0.003143310546875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:10.404572Z",
+        "usedBytes": 843776,
+        "limitBytes": 268435456,
+        "ratio": 0.003143310546875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:11.39707771Z",
+        "usedBytes": 843776,
+        "limitBytes": 268435456,
+        "ratio": 0.003143310546875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:12.400251129Z",
+        "usedBytes": 843776,
+        "limitBytes": 268435456,
+        "ratio": 0.003143310546875,
+        "pressureFull": 0
+      },
+      {
+        "time": "2026-09-05T16:19:13.402567938Z",
+        "usedBytes": 843776,
+        "limitBytes": 268435456,
+        "ratio": 0.003143310546875,
+        "pressureFull": 0
+      }
+    ],
+    "processes": [],
+    "victimMatch": "nsPid",
+    "groupKill": true,
+    "trend": {
+      "bytesPerSecond": 0,
+      "rSquared": 1,
+      "samples": 5,
+      "window": 4003414885,
+      "timeToLimit": 0,
+      "projected": false
+    }
+  }
+]

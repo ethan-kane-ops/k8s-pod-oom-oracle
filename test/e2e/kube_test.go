@@ -158,6 +158,14 @@ type report struct {
 	// victim is absent but not which matcher achieved it, so the NSPid fallback
 	// could be deleted without turning anything red.
 	VictimMatch string `json:"victimMatch"`
+	Trend       struct {
+		BytesPerSecond float64 `json:"bytesPerSecond"`
+		RSquared       float64 `json:"rSquared"`
+		Samples        int     `json:"samples"`
+		Window         int64   `json:"window"`
+		TimeToLimit    int64   `json:"timeToLimit"`
+		Projected      bool    `json:"projected"`
+	} `json:"trend"`
 }
 
 func daemonStatus(t *testing.T, pod string) status {

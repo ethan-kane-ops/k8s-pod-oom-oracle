@@ -1,0 +1,74 @@
+# A slow leak, and the only sample here that produces a real memory curve.
+#
+# Every other workload in this directory allocates faster than the sampler runs,
+# so their trajectories are flat and `peakBytes` is the only honest number. That
+# is a true and important thing to show, and it is also not what a leak looks
+# like. A process that grows a megabyte at a time over a minute is the case the
+# trajectory exists for, and until this sample there was no way to see one.
+#
+#   kubectl apply -f examples/workloads/gradual-leak.yaml
+#
+# The kill lands about a minute later. Then, against the daemon on that node:
+#
+#   kubectl get --raw /api/v1/namespaces/oom-oracle/pods/<daemon-pod>:9090/proxy/v1/events
+#
+# EXPECTED REPORT (abridged, from a real run on kind):
+#
+#   source        ebpf
+#   pod           default/oom-gradual-leak/leaker
+#   victim        sh, nsPid 1, rss 127 MiB, inferred false
+#   limitBytes    134217728        (128 MiB, the limit below)
+#   peakBytes     134217728
+#   trajectory    31 samples climbing steadily from 1.8 MiB to the limit
+#   trend         bytesPerSecond 2482479 (2.4 MiB/s), rSquared 0.94,
+#                 timeToLimit 26602359254 (26s), projected true
+#
+# `trend` is the field to read here, and the one the other samples cannot
+# demonstrate. A high `rSquared` means the growth really is linear rather than a
+# spike that happened to be caught mid-flight, and `timeToLimit` is only
+# meaningful when it is. That is the difference between "this container is
+# leaking and will die in four minutes" and "this container had a bad second".
+#
+# The victim is the shell itself, not a child. The memory is held in a shell
+# variable, so `comm` reads `sh`. On a real leak it would name your process.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-gradual-leak
+  labels:
+    app.kubernetes.io/name: oom-oracle-example
+spec:
+  # Never, so the pod stays Failed for inspection instead of restarting into a
+  # fresh OOM every minute.
+  restartPolicy: Never
+  containers:
+    - name: leaker
+      image: alpine:3.20
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c"]
+      # One megabyte of anonymous memory appended to a shell variable every
+      # 400ms, which measured 2.4 MiB/s against a 128 MiB limit: about fifty
+      # seconds of climb. The report keeps the most recent sixty samples, so the
+      # whole ascent fits with room to spare rather than being truncated to its
+      # last few seconds.
+      #
+      # The memory is anonymous and charged to this container's cgroup, so this
+      # is a container-scope kill. It is not tmpfs and not shared, which is what
+      # shared-memory-pod-level.yaml demonstrates instead.
+      args:
+        - |
+          sleep 3
+          chunk=$(head -c 1048576 /dev/zero | tr '\0' 'x')
+          held=""
+          i=0
+          while :; do
+            held="$held$chunk"
+            i=$((i + 1))
+            echo "held ${i}MiB"
+            sleep 0.4
+          done
+      resources:
+        limits:
+          memory: 128Mi
+        requests:
+          memory: 32Mi

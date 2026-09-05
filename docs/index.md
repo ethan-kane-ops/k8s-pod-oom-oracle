@@ -2,8 +2,10 @@
 
 A node agent that explains Kubernetes OOM kills at the level the control plane
 cannot: which process died, how much memory it held at the moment the kernel
-chose it, what the memory curve looked like on the way there, and what was still
-running afterwards.
+chose it, what the memory curve looked like on the way there, and what else was
+in the container when it happened.
+
+![oom-oracle explaining an OOM kill and browsing a node's kills live](assets/demo.gif)
 
 ## The one thing Kubernetes cannot tell you
 
@@ -43,6 +45,8 @@ VICTIM PROCESS:
   Confidence:      traced in the kernel at the moment of the kill.
 
 PROCESSES IN CONTAINER AFTER THE KILL:
+  memory.oom.group=0: the kernel killed only the process it
+  selected, so these were still running after it died.
   1. node ./dist/server.js (PID 28102) - 390.0MiB
   2. node ./dist/worker.js (PID 28160) - 8.0MiB
 ```

@@ -19,6 +19,26 @@ DaemonSet:
 just e2e-deploy
 ```
 
+## With Helm
+
+```bash
+helm install oom-oracle oci://ghcr.io/ethan-kane-ops/charts/oom-oracle \
+  --namespace oom-oracle --create-namespace
+
+kubectl label namespace oom-oracle \
+  pod-security.kubernetes.io/enforce=privileged \
+  pod-security.kubernetes.io/audit=privileged \
+  pod-security.kubernetes.io/warn=privileged
+```
+
+The label is required even though the agent is not `privileged: true`:
+`hostPID`, `hostPath` volumes and the two capabilities it adds are each outside
+the `baseline` level on their own. Without it admission rejects the pods and the
+DaemonSet reports no event explaining why.
+
+The chart's values are documented in
+[its README](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/blob/main/charts/oom-oracle/README.md).
+
 ## On any cluster
 
 ```bash
@@ -80,6 +100,7 @@ kubectl apply -f examples/workloads/single-process-killed.yaml
 | Workload | What it demonstrates |
 |---|---|
 | `single-process-killed.yaml` | The simplest case: one process, one limit, one kill |
+| `gradual-leak.yaml` | A slow leak: the only sample that produces a real memory curve and a meaningful `trend` |
 | `multi-process-survivor.yaml` | Which of several processes the kernel chose, and the `memory.oom.group` split |
 | `worker-pool.yaml` | A pool of identical workers where only the report can say which one died |
 | `jvm-heap-overrun.yaml` | A heap that outgrows the container limit rather than the JVM's own |

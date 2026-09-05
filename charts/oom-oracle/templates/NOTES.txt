@@ -1,0 +1,40 @@
+{{ include "oom-oracle.fullname" . }} is installed in namespace {{ .Release.Namespace }}.
+
+An agent now runs on every node that tolerates it. Check one is watching:
+
+  kubectl -n {{ .Release.Namespace }} rollout status daemonset/{{ include "oom-oracle.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} port-forward daemonset/{{ include "oom-oracle.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl -s localhost:{{ .Values.service.port }}/v1/status
+
+Read "detector" in that output before trusting anything else:
+
+  ebpf     victims are traced in the kernel as they are killed
+  poller   victims are inferred from which process vanished between samples
+
+Then browse what it finds:
+
+  oom-oracle watch      live dashboard
+  oom-oracle inspect    every recorded kill, newest first
+
+{{ if ne .Values.daemon.detector "poller" -}}
+The agent needs CAP_BPF and CAP_PERFMON, hostPID, and read-only host mounts of
+{{ .Values.hostPaths.cgroup }} and {{ .Values.hostPaths.proc }}. Each is outside the `baseline` Pod Security
+level on its own, so namespace {{ .Release.Namespace }} must carry the `privileged` level or
+admission will reject the pods with no DaemonSet event explaining why:
+
+  kubectl label namespace {{ .Release.Namespace }} \
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged
+{{- end }}
+{{ if not .Values.rbac.create -}}
+WARNING: rbac.create is false. Nothing grants get/list/watch on pods, so reports
+will identify pods by UID rather than by name until something else does.
+{{- end }}
+{{- if eq .Values.daemon.detector "poller" }}
+NOTE: detector is pinned to "poller". Victims will be inferred from process
+snapshots rather than traced, and a container that allocates faster than the
+sample interval can die between two reads without being seen at all.
+{{- end }}
+
+Docs: https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/

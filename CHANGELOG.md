@@ -76,6 +76,15 @@ field needs a nullable boolean, not a boolean.
   `inspect` prints, and the header states which detector is active because an
   inferred victim and a traced one differ in one boolean and nothing else. It
   reads the HTTP API and needs no privileges of its own.
+- **`examples/workloads/gradual-leak.yaml`**, a slow leak. Every other sample
+  allocates faster than the sampler runs, so their trajectories are flat and
+  `peakBytes` is the only honest number. Nothing demonstrated the case the
+  trajectory and `trend` exist for until this.
+- **A Helm chart**, published to `oci://ghcr.io/ethan-kane-ops/charts/oom-oracle`
+  on each tag, signed and attested like the image. What the agent cannot work
+  without is deliberately not configurable: a chart that let you turn off
+  `hostPID` would produce a daemon that installs, runs, reports nothing and
+  explains nothing.
 - **A release pipeline.** A `v*` tag builds CLI archives for linux, darwin and
   windows on amd64 and arm64, plus a multi-arch container image. Everything is
   signed with cosign in keyless mode and carries an SBOM, and the image is

@@ -17,6 +17,7 @@ kubectl apply -f deploy/
 |---|---|
 | [`workloads/single-process-killed.yaml`](workloads/single-process-killed.yaml) | The simplest case, and why `peakBytes` and `trajectory` disagree |
 | [`workloads/worker-pool.yaml`](workloads/worker-pool.yaml) | Which of five processes took the memory |
+| [`workloads/gradual-leak.yaml`](workloads/gradual-leak.yaml) | A slow leak, and the only sample that produces a real memory curve |
 | [`workloads/multi-process-survivor.yaml`](workloads/multi-process-survivor.yaml) | The container surviving its child, and the runtime setting that decides whether it can |
 | [`workloads/jvm-heap-overrun.yaml`](workloads/jvm-heap-overrun.yaml) | `-Xmx` above the container limit, killed before any application code runs |
 | [`workloads/shared-memory-pod-level.yaml`](workloads/shared-memory-pod-level.yaml) | A container killed at 43% of its own limit, because the pod slice ran out first |

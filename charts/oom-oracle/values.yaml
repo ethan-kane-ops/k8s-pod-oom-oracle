@@ -1,0 +1,116 @@
+# Default values for oom-oracle.
+#
+# The defaults install the same thing `kubectl apply -f deploy/` does. Anything
+# the agent cannot work without is not made optional here: a chart that lets you
+# turn off hostPID produces a daemon that runs, reports nothing, and says
+# nothing about why.
+
+image:
+  repository: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle
+  # Defaults to .Chart.AppVersion, which is the tag the chart was published
+  # alongside. Pin a digest here for an immutable deployment.
+  tag: ""
+  pullPolicy: IfNotPresent
+  # Overrides repository and tag entirely, for a digest reference.
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+daemon:
+  # auto prefers eBPF and falls back to polling, logging why. poller never
+  # traces. ebpf never falls back, and fails to start when the kernel refuses,
+  # which is what you want if inferred victims are not acceptable.
+  detector: auto
+  # How often the poller re-reads kill counters. Ignored under the eBPF
+  # detector, which is event-driven.
+  pollInterval: 1s
+  # How often memory is sampled for the trajectory, and how many samples are
+  # kept per container. 60 samples at 1s is a minute of history, which is what
+  # the trajectory chart draws.
+  sampleInterval: 1s
+  history: 60
+  # Reports held in memory per node. There is no persistence: the agent is a
+  # diagnostic, not a store, and a restart loses what it held.
+  retain: 256
+  # Limit watching to a cgroup subtree. "/" watches the whole hierarchy.
+  cgroupPrefix: "/"
+  # Report kills outside the kubepods tree as well. Off by default: on a busy
+  # node the probes see every kill on the machine, and most are not yours.
+  includeNonKubernetes: false
+  # off disables the pod informer entirely; reports then identify pods by UID.
+  # auto degrades to that with a logged reason when the API server is
+  # unreachable. on refuses to start rather than degrade.
+  kubernetes: auto
+  logLevel: info
+  logFormat: json
+  # Where the daemon serves its HTTP API. Bound inside the pod, not the node.
+  listen: ":9090"
+  # Extra flags appended verbatim, for anything not surfaced above.
+  extraArgs: []
+
+service:
+  # Headless on purpose. Each agent holds only its own node's reports, so a
+  # load-balanced VIP would answer a query about one node's pod from a different
+  # node's daemon and report nothing found.
+  enabled: true
+  port: 9090
+  annotations: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  # One rule: get, list and watch on pods. That is the whole of the agent's
+  # cluster access, and it is what turns a pod UID into a name. Disable it only
+  # when binding an existing role yourself, and expect UID-only reports if
+  # nothing grants it.
+  create: true
+
+# Read by the container as NODE_NAME through the downward API. The pod informer
+# is scoped to one node with a field selector and refuses to guess, so there is
+# no value to set here; it is listed to say the agent does not read `nodes`.
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+# The agent must run on every node it is meant to watch, including tainted ones.
+# An untolerated taint is a node with no OOM reporting and nothing saying so.
+tolerations:
+  - operator: Exists
+
+nodeSelector: {}
+affinity: {}
+
+# system-node-critical keeps the agent from being the thing evicted when a node
+# runs out of memory, which is the moment it exists for.
+priorityClassName: system-node-critical
+
+podAnnotations: {}
+podLabels: {}
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 20
+
+# /readyz means the probe is attached and the sampler holds history, not merely
+# that the process started.
+readinessProbe:
+  initialDelaySeconds: 2
+  periodSeconds: 5
+
+hostPaths:
+  # Both are mounted read-only. The daemon never writes to the node.
+  cgroup: /sys/fs/cgroup
+  proc: /proc

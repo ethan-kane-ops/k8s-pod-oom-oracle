@@ -10,6 +10,18 @@ The `deploy/` directory contains four manifests, applied in order by
 | `20-daemonset.yaml` | The agent itself |
 | `30-service.yaml` | A headless Service |
 
+## Two ways to install
+
+| | |
+|---|---|
+| `helm install oci://ghcr.io/ethan-kane-ops/charts/oom-oracle` | The supported path. Values are documented in [the chart README](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/blob/main/charts/oom-oracle/README.md) |
+| `kubectl apply -f deploy/` | The same objects as plain YAML, for reading and for clusters with no Helm |
+
+`deploy/` is not a lesser copy: CI renders both and checks every daemon flag they
+pass actually exists on the binary, and the nightly e2e installs the chart on
+kind and asserts the probe attaches. They can still differ in defaults, so treat
+the chart as authoritative.
+
 ## What it needs, and why
 
 | Grant | Why |
