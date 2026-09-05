@@ -111,7 +111,7 @@ in [`examples/workloads/`](examples/workloads/).
 | [Deployment](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/deployment/) | DaemonSet, privileges, Pod Security, resource sizing |
 | [API Reference](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/reference/api/) | Routes and the full report schema |
 | [Troubleshooting](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/troubleshooting/) | When the probe will not attach, and what the counters mean |
-| [Security](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/security/) | Threat model, why privileged, what the probe reads |
+| [Security](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/security/) | Threat model, the capabilities it asks for, what the probe reads |
 | [Development](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/development/) | Build, eBPF regeneration, the e2e suite |
 
 ---

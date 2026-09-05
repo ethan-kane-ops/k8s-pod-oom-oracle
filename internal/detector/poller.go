@@ -277,15 +277,15 @@ func (p *Poller) inferVictimLocked(path string) Victim {
 		return Victim{}
 	}
 
-	survivors, err := p.proc.ProcessesInCgroup(path)
+	pids, err := p.cgroup.ProcsIn(path)
 	if err != nil {
 		p.log.Debug("listing survivors", "cgroup", path, "error", err)
 		return Victim{}
 	}
 
-	alive := make(map[int]struct{}, len(survivors))
-	for _, proc := range survivors {
-		alive[proc.PID] = struct{}{}
+	alive := make(map[int]struct{}, len(pids))
+	for _, pid := range pids {
+		alive[pid] = struct{}{}
 	}
 
 	var candidates []procfs.Process
@@ -314,21 +314,26 @@ func (p *Poller) inferVictimLocked(path string) Victim {
 
 // refreshSnapshotsLocked records the current process list for each cgroup.
 //
-// /proc is walked once for every cgroup at once. Scanning per cgroup would
-// repeat the walk hundreds of times per pass on a busy node.
+// Membership comes from each cgroup's own cgroup.procs rather than from walking
+// /proc and grouping by /proc/<pid>/cgroup. That grouping read correctly only
+// from the host cgroup namespace, which an unprivileged pod does not get, and it
+// also read every process on the node to keep the handful in tracked cgroups.
+// One small file per tracked cgroup is both correct and less work.
 func (p *Poller) refreshSnapshotsLocked(paths []string) {
 	if p.proc == nil {
 		return
 	}
 
-	grouped, err := p.proc.ProcessesByCgroup()
-	if err != nil {
-		p.log.Debug("snapshotting processes", "error", err)
-		return
-	}
-
 	for _, path := range paths {
-		procs := grouped[path]
+		pids, err := p.cgroup.ProcsIn(path)
+		if err != nil {
+			// A cgroup that vanished between discovery and this read is normal
+			// churn, and must not discard the snapshots already taken.
+			p.log.Debug("snapshotting processes", "cgroup", path, "error", err)
+			continue
+		}
+
+		procs := p.proc.ProcessesWithPIDs(pids)
 		byPID := make(map[int]procfs.Process, len(procs))
 		for _, proc := range procs {
 			byPID[proc.PID] = proc

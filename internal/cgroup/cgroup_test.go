@@ -3,6 +3,7 @@ package cgroup
 import (
 	"errors"
 	"io/fs"
+	"slices"
 	"testing"
 	"testing/fstest"
 )
@@ -415,5 +416,83 @@ func TestVersionString(t *testing.T) {
 		if got := version.String(); got != want {
 			t.Errorf("Version(%d).String() = %q, want %q", version, got, want)
 		}
+	}
+}
+
+// TestProcsIn covers the membership read that replaced matching
+// /proc/<pid>/cgroup, which was unusable from a pod in a private cgroup
+// namespace.
+func TestProcsIn(t *testing.T) {
+	t.Parallel()
+
+	const container = "/kubepods.slice/kubepods-burstable.slice/pod-abc/container"
+
+	tests := []struct {
+		name   string
+		body   string
+		want   []int
+		wantOK bool
+	}{
+		{
+			name:   "pids are read in file order",
+			body:   "28102\n28145\n28160\n",
+			want:   []int{28102, 28145, 28160},
+			wantOK: true,
+		},
+		{
+			// The kernel creates the file with the cgroup and empties it as
+			// processes leave. An empty cgroup is not an error, and under group
+			// kill it is the usual state by the time anything reads it.
+			name:   "an empty cgroup yields no pids",
+			body:   "",
+			want:   nil,
+			wantOK: true,
+		},
+		{
+			// cgroup.procs is written while processes join and leave, so a torn
+			// read is normal. Losing every valid line because one was mangled
+			// would discard the only evidence of what was in the cgroup.
+			name:   "a mangled line is skipped rather than failing the read",
+			body:   "28102\nnot-a-pid\n\n0\n-5\n28160\n",
+			want:   []int{28102, 28160},
+			wantOK: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fsys := v2Fixture()
+			fsys[container[1:]+"/cgroup.procs"] = &fstest.MapFile{Data: []byte(tt.body)}
+
+			f, err := New(fsys)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			got, err := f.ProcsIn(container)
+			if (err == nil) != tt.wantOK {
+				t.Fatalf("ProcsIn() error = %v, wantOK %v", err, tt.wantOK)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("ProcsIn() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestProcsInMissingCgroupErrors keeps a destroyed cgroup distinguishable from
+// an empty one. Reporting no processes for both would make a torn-down
+// container look like one that quietly emptied itself.
+func TestProcsInMissingCgroupErrors(t *testing.T) {
+	t.Parallel()
+
+	f, err := New(v2Fixture())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := f.ProcsIn("/kubepods.slice/gone"); err == nil {
+		t.Error("ProcsIn() on a cgroup that does not exist returned no error")
 	}
 }

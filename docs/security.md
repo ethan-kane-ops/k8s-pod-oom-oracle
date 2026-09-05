@@ -8,31 +8,47 @@
 
 ## What this daemon can do on a node
 
-It runs `privileged: true` as UID 0, with `hostPID` and the host's
-`/sys/fs/cgroup` and `/proc` mounted. That is a lot of authority, and it is worth
-being precise about what it is used for.
+It runs as UID 0 with `CAP_BPF` and `CAP_PERFMON`, every other capability
+dropped, `hostPID`, and the host's `/sys/fs/cgroup` and `/proc` mounted
+read-only. That is still real authority, and it is worth being precise about
+what it is used for.
 
 | Capability | Used for | Not used for |
 |---|---|---|
-| Loading a BPF program | One kprobe on `oom_kill_process` | Nothing else. No network hooks, no LSM, no tracepoints on syscalls |
-| `hostPID` | Reading `/proc/<pid>` for a victim's command line and the container's process list | Signalling, killing, or entering any namespace |
-| Host mounts | Reading cgroup memory files | Both are mounted read-only |
+| `CAP_BPF` | Creating maps and loading one verified program | Nothing else. No network hooks, no LSM, no tracepoints on syscalls |
+| `CAP_PERFMON` | Attaching that program to a kprobe on `oom_kill_process` | Profiling, sampling, or any other perf event |
+| `hostPID` | Reading `/proc/<pid>` for a victim's command line | Signalling, killing, or entering any namespace |
+| Host mounts | Reading cgroup memory files and membership | Both are mounted read-only |
 | `pods: get,list,watch` | Turning a pod UID into a name | Nothing is written to the API server |
 
 The daemon never writes to the node or to the API server.
 
-## Why privileged, and what would replace it
+## Why not `privileged: true`
 
-`privileged: true` is stronger than the work needs. The job wants `CAP_BPF` and
-`CAP_PERFMON`, not everything.
+It was `privileged: true` with `runAsUser: 0` until the narrower set was measured
+on a real cluster. `privileged` grants the full capability set and unrestricted
+device access, and this daemon loads one kprobe and reads two read-only mounts.
 
-Narrowing it is open work. The obstacle is that a non-root UID starts with an
-empty effective capability set no matter how permissive its bounding set is, so
-the failure mode is a silent fallback to polling rather than an error. Shipping
-a narrower profile that quietly degrades on some kernels would be worse than the
-honest broad one.
+Two things made the narrowing non-obvious.
 
-Until that lands, the mitigation is scope: the DaemonSet is one namespace, one
+**A non-root UID cannot use a capability.** It starts with an empty *effective*
+set however large its bounding set is, and populating it needs ambient
+capabilities, which a pod spec cannot request. So the container runs as UID 0
+with `drop: [ALL]`, rather than as `nonroot` holding capabilities it could never
+raise. Running unprivileged and non-root is not available here; running
+unprivileged is.
+
+**Dropping `privileged` broke the process listing, and not because of a
+capability.** containerd puts a privileged container in the host cgroup
+namespace and everything else in a private one. `/proc/<pid>/cgroup` is written
+relative to the reader's cgroup namespace, so the daemon read `0::/` for itself
+and namespace-relative paths for everything else, matched none of them against
+the absolute paths the probe reports, and produced reports with an empty process
+list. Nothing errored. The daemon now reads membership from the kernel's
+`cgroup.procs` in the cgroupfs it already mounts, which reads identically from
+any namespace.
+
+The remaining mitigation is scope: the DaemonSet is one namespace, one
 ServiceAccount, and one ClusterRole containing a single read-only rule.
 
 ## What the probe reads

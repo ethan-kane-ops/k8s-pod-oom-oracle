@@ -3,10 +3,25 @@
 # The privileges below are not incidental, and each one is the minimum for a
 # capability the tool would otherwise lose:
 #
-#   privileged        loading a BPF program and attaching a kprobe. Without it
-#                     the daemon still runs, falling back to the poller.
+#   CAP_BPF           creating maps and loading the verified program. Without
+#   CAP_PERFMON       it, or without CAP_PERFMON to attach the kprobe, bpf()
+#                     returns EPERM and the daemon still runs, falling back to
+#                     the poller. Both arrived in 5.8, which is also the floor
+#                     for the CO-RE probe, so nothing is lost by requiring them.
+#   runAsUser: 0      a non-zero UID starts with an empty *effective* capability
+#                     set however large its bounding set is, so the capabilities
+#                     above would be present and unusable. A pod spec cannot
+#                     request ambient capabilities, which is what would populate
+#                     the effective set for a non-root UID, so the daemon runs
+#                     as root with almost every capability dropped rather than
+#                     as nonroot with capabilities it cannot use.
 #   hostPID           /proc must show the node's processes, not the pod's, or
-#                     there is no victim to identify and no survivors to list.
+#                     there is no victim to identify and nothing to list.
+#
+# What is deliberately NOT here is `privileged: true`, which this shipped with
+# until the narrower set was measured on kind. privileged grants the full
+# capability set plus unrestricted device access, and the daemon writes nothing
+# anywhere: it loads one kprobe and reads two read-only mounts.
 #
 # A separate hazard has no field to set: /proc/<pid>/cgroup is written relative
 # to the *reading* process's cgroup namespace, and the CRI puts pods in a
@@ -63,13 +78,26 @@ spec:
             - name: http
               containerPort: 9090
           securityContext:
-            privileged: true
-            # privileged alone is not enough. The image's base runs as
-            # "nonroot", and a process that is not UID 0 starts with an empty
-            # effective capability set no matter how large its bounding set is,
-            # so bpf() returns EPERM and the daemon silently falls back to
-            # polling. This was found by the e2e suite, not by reading docs.
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            # UID 0 with nearly everything dropped, rather than nonroot with
+            # capabilities that would not be effective. See the header: a
+            # non-zero UID cannot raise a capability into its effective set
+            # without ambient capabilities, and a pod spec cannot ask for those.
             runAsUser: 0
+            runAsGroup: 0
+            capabilities:
+              drop:
+                - ALL
+              add:
+                # Load the program and create its maps.
+                - BPF
+                # Attach the kprobe through perf_event_open. Without this,
+                # loading succeeds and attaching is what fails.
+                - PERFMON
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: cgroup
               mountPath: /host/sys/fs/cgroup

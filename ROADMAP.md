@@ -38,10 +38,12 @@ Shipped since this list was written: runnable
 
 ## Known limitations, and what would fix them
 
-- **The daemon runs `privileged: true` as UID 0.** Stronger than the work needs.
-  Narrowing it to `CAP_BPF` and `CAP_PERFMON` is open work; the obstacle is that
-  a non-root UID starts with an empty effective capability set, and the failure
-  mode is a silent fallback to polling rather than an error.
+- **The daemon runs as UID 0.** No longer `privileged`: it asks for `CAP_BPF`
+  and `CAP_PERFMON` with everything else dropped. It cannot drop root as well.
+  A non-root UID starts with an empty effective capability set however large its
+  bounding set is, and populating it needs ambient capabilities that a pod spec
+  cannot request, so `bpf()` would return `EPERM` and the daemon would fall back
+  to polling without saying so.
 - **The HTTP API is unauthenticated.** Fine bound to a node, not fine exposed.
   Anything beyond the node needs authentication in front of it.
 - **The poller can miss a kill entirely.** It samples, so a container that

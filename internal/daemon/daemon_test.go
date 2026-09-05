@@ -81,6 +81,9 @@ func (h *recordingHandler) warnings() []string {
 type harness struct {
 	cgroups fstest.MapFS
 	procs   fstest.MapFS
+	// pids are the processes added so far, so cgroup.procs can be rewritten in
+	// full each time one is added.
+	pids    []int
 	clock   time.Time
 	sampler *sampler.Sampler
 	store   *store.Memory
@@ -169,6 +172,16 @@ func (h *harness) addProcess(pid int, comm string, rssKB int) {
 	}
 	h.procs[dir+"/cmdline"] = &fstest.MapFile{Data: []byte(comm + "\x00")}
 	h.procs[dir+"/cgroup"] = &fstest.MapFile{Data: []byte("0::" + containerCgroup + "\n")}
+
+	// The daemon reads membership from the kernel's cgroup.procs, not from
+	// /proc/<pid>/cgroup, so the fixture has to maintain it. /proc/<pid>/cgroup
+	// stays written because the procfs reader still parses it.
+	h.pids = append(h.pids, pid)
+	var list []byte
+	for _, p := range h.pids {
+		list = fmt.Appendf(list, "%d\n", p)
+	}
+	h.cgroups[containerCgroup[1:]+"/cgroup.procs"] = &fstest.MapFile{Data: list}
 }
 
 // collect takes one sampler pass and advances the clock.

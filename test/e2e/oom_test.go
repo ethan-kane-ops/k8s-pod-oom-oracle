@@ -31,10 +31,20 @@ func TestDaemonIsWatchingTheNode(t *testing.T) {
 	if got.TrackedCgroups == 0 {
 		t.Error("daemon is tracking no cgroups")
 	}
-	switch got.Detector {
-	case "ebpf", "poller":
-	default:
-		t.Errorf("detector = %q, want ebpf or poller", got.Detector)
+	// Deliberately not "ebpf or poller". The daemon falls back to polling when
+	// it cannot load or attach the probe, and that fallback is silent by design,
+	// so accepting either value made this suite unable to see a privilege
+	// regression at all: the manifest could lose CAP_BPF and every test here
+	// would still pass, on inferred victims, reporting nothing amiss.
+	//
+	// kind runs on a kernel with BTF, so ebpf is the only correct answer here.
+	// A poller result means the deployment stopped being able to trace, which is
+	// the finding, not a reason to relax the assertion.
+	if got.Detector != "ebpf" {
+		t.Errorf("detector = %q, want ebpf: the daemon could not load or attach the "+
+			"probe and fell back to inferring victims. Check the securityContext in "+
+			"deploy/20-daemonset.yaml still grants CAP_BPF and CAP_PERFMON, and see "+
+			"`just e2e-logs` for the reason it logged at startup", got.Detector)
 	}
 	// Kill counters and PSI both need the unified hierarchy. A v1 node would
 	// silently degrade the whole product, so it is worth stating outright.

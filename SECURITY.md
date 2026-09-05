@@ -37,18 +37,24 @@ README; what matters here is what those privileges mean if it is compromised.
 
 | What `deploy/20-daemonset.yaml` asks for | Grants an attacker |
 |---|---|
-| `privileged: true` with `runAsUser: 0` | Root on the node, for practical purposes |
+| `runAsUser: 0` with `CAP_BPF` and `CAP_PERFMON` | Loading BPF programs and attaching probes, as root inside the container |
 | `hostPID: true` | Every process on the node, through `/proc` |
 | `/sys/fs/cgroup` and `/proc` host mounts | Memory accounting and command lines for every container |
 | `pods: get, list, watch` cluster-wide | Pod metadata for the entire cluster |
 
-The first row is the one to weigh. `privileged` is stronger than this daemon
-conceptually needs, and the manifest says why next to the field: the image runs
-as `nonroot`, and a non-zero UID starts with an empty effective capability set
-regardless of its bounding set, so `bpf()` returns `EPERM` and the daemon
-silently degrades to polling. Narrowing this to `CAP_BPF` and `CAP_PERFMON` on a
-kernel that supports them is on the [roadmap](./ROADMAP.md); it is not a
-supported configuration today.
+The first row is the one to weigh. It is narrower than it was: the manifest
+shipped `privileged: true` until the minimum was measured on a real cluster, and
+now asks for two capabilities with `drop: [ALL]`, `allowPrivilegeEscalation:
+false`, a read-only root filesystem and the `RuntimeDefault` seccomp profile.
+
+It is still UID 0. A non-zero UID starts with an empty effective capability set
+regardless of its bounding set, and populating it needs ambient capabilities that
+a pod spec cannot request, so `bpf()` would return `EPERM` and the daemon would
+silently degrade to polling. Running as `nonroot` is therefore not available;
+running unprivileged is, and it does.
+
+The namespace still needs the `privileged` Pod Security level, because `hostPID`,
+`hostPath` volumes and non-default capabilities are each outside `baseline`.
 
 Three deliberate limits narrow that surface:
 

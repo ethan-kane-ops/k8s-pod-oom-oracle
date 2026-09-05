@@ -164,6 +164,32 @@ func (f *FS) ReadMemoryStats(cgroupPath string) (MemoryStats, error) {
 	return f.readMemoryStatsV2(cgroupPath)
 }
 
+// ProcsIn lists the host PIDs currently in a cgroup, from the kernel's own
+// membership file.
+//
+// This exists instead of matching /proc/<pid>/cgroup because that file is
+// written relative to the *reading* process's cgroup namespace, and the CRI puts
+// an unprivileged pod in a private one. A daemon there reads "0::/" for itself
+// and namespace-relative paths for everything else, so comparing them against
+// the absolute paths the probe and the sampler use matches nothing and the
+// process listing silently comes back empty. Nothing errors; a report simply
+// arrives with no processes in it.
+//
+// cgroup.procs has no such dependency. It lives in the cgroupfs the daemon
+// already mounts, it is addressed by the same absolute path everything else
+// uses, and the PIDs in it are in the reader's PID namespace, which hostPID
+// makes the host's. It is also the kernel's own answer rather than one inferred
+// by comparing strings, and reading one file per cgroup is cheaper than walking
+// every process on the node.
+func (f *FS) ProcsIn(cgroupPath string) ([]int, error) {
+	name := path.Join(cleanCgroupPath(cgroupPath), "cgroup.procs")
+	data, err := fs.ReadFile(f.root, name)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", name, err)
+	}
+	return ParsePIDList(data)
+}
+
 // ReadOOMGroup reports whether the cgroup is killed as an indivisible unit.
 //
 // When memory.oom.group is set the kernel kills every process in the cgroup

@@ -236,7 +236,7 @@ func TestProcessesSkipsRacingExit(t *testing.T) {
 	}
 }
 
-func TestProcessesInCgroupSortsByDescendingRSS(t *testing.T) {
+func TestProcessesWithPIDsSortsByDescendingRSS(t *testing.T) {
 	t.Parallel()
 
 	tree := buildTree(
@@ -250,10 +250,10 @@ func TestProcessesInCgroupSortsByDescendingRSS(t *testing.T) {
 		procEntry{pid: "1", status: status("systemd", "1", "0", "1", "8192"), cgroup: "0::/init.scope\n"},
 	)
 
-	got, err := New(tree).ProcessesInCgroup(containerCgroup)
-	if err != nil {
-		t.Fatalf("ProcessesInCgroup() error = %v", err)
-	}
+	// The PIDs come from the cgroup's own cgroup.procs, which is what the
+	// callers read: /proc/<pid>/cgroup is written relative to the reader's
+	// cgroup namespace and matches nothing from an unprivileged pod.
+	got := New(tree).ProcessesWithPIDs([]int{28145, 28102, 28160})
 
 	gotPIDs := make([]int, len(got))
 	for i, p := range got {
@@ -261,21 +261,38 @@ func TestProcessesInCgroupSortsByDescendingRSS(t *testing.T) {
 	}
 	// Biggest consumer first; the two equal-RSS processes tie-break by PID.
 	if want := []int{28102, 28145, 28160}; !reflect.DeepEqual(gotPIDs, want) {
-		t.Errorf("ProcessesInCgroup() PIDs = %v, want %v", gotPIDs, want)
+		t.Errorf("ProcessesWithPIDs() PIDs = %v, want %v", gotPIDs, want)
 	}
 }
 
-func TestProcessesInCgroupNoMatches(t *testing.T) {
+// TestProcessesWithPIDsSkipsUnreadable covers the normal case rather than an
+// edge one. cgroup.procs is a snapshot, so a process listed in it can exit
+// before it is read, and that is exactly what happens while a container is
+// being torn down: the moment this is most often called.
+func TestProcessesWithPIDsSkipsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	tree := buildTree(
+		procEntry{pid: "28102", status: status("server", "28102", "1", "1", "399360"), cgroup: "0::" + containerCgroup + "\n"},
+	)
+
+	got := New(tree).ProcessesWithPIDs([]int{28102, 999999})
+	if len(got) != 1 {
+		t.Fatalf("ProcessesWithPIDs() returned %d processes, want 1: a pid that has "+
+			"exited must be skipped rather than losing the ones still readable", len(got))
+	}
+	if got[0].PID != 28102 {
+		t.Errorf("ProcessesWithPIDs()[0].PID = %d, want 28102", got[0].PID)
+	}
+}
+
+func TestProcessesWithPIDsNoPIDs(t *testing.T) {
 	t.Parallel()
 
 	tree := buildTree(procEntry{pid: "1", status: status("init", "1", "0", "1", "1024"), cgroup: "0::/\n"})
 
-	got, err := New(tree).ProcessesInCgroup(containerCgroup)
-	if err != nil {
-		t.Fatalf("ProcessesInCgroup() error = %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("ProcessesInCgroup() = %v, want empty", got)
+	if got := New(tree).ProcessesWithPIDs(nil); len(got) != 0 {
+		t.Errorf("ProcessesWithPIDs(nil) = %v, want empty", got)
 	}
 }
 

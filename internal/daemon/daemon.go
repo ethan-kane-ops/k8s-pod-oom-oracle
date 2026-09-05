@@ -214,11 +214,16 @@ func (d *Daemon) buildReport(event detector.KillEvent) (oom.Report, bool) {
 	d.applyLiveStats(&report, event)
 	d.applyGroupKill(&report, event)
 
-	if d.proc != nil {
-		procs, err := d.proc.ProcessesInCgroup(event.CgroupPath)
+	if d.proc != nil && d.cgroup != nil {
+		// Membership comes from the kernel's cgroup.procs rather than from
+		// matching /proc/<pid>/cgroup, which is written relative to the reading
+		// process's cgroup namespace and therefore matches nothing at all when
+		// the daemon is not in the host's. See cgroup.FS.ProcsIn.
+		pids, err := d.cgroup.ProcsIn(event.CgroupPath)
 		if err != nil {
 			d.log.Debug("listing container processes", "cgroup", event.CgroupPath, "error", err)
 		} else {
+			procs := d.proc.ProcessesWithPIDs(pids)
 			report.Processes, report.VictimMatch = oom.ProcessesFrom(procs, event.Victim)
 			d.warnOnUnfilteredVictim(&report)
 		}

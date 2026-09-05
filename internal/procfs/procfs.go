@@ -137,32 +137,6 @@ func (f *FS) Processes() ([]Process, error) {
 	return procs, nil
 }
 
-// ProcessesByCgroup groups every readable process by its cgroup path, each
-// group sorted by descending RSS.
-//
-// Callers watching many cgroups must use this rather than calling
-// ProcessesInCgroup per cgroup: /proc is walked once here, instead of once per
-// cgroup, which on a busy node is the difference between one scan and hundreds
-// per polling pass.
-func (f *FS) ProcessesByCgroup() (map[string][]Process, error) {
-	all, err := f.Processes()
-	if err != nil {
-		return nil, err
-	}
-
-	grouped := make(map[string][]Process)
-	for _, proc := range all {
-		if proc.CgroupPath == "" {
-			continue
-		}
-		grouped[proc.CgroupPath] = append(grouped[proc.CgroupPath], proc)
-	}
-	for path := range grouped {
-		sortByMemory(grouped[path])
-	}
-	return grouped, nil
-}
-
 // sortByMemory orders processes heaviest first, PID ascending as a tie-break.
 func sortByMemory(procs []Process) {
 	slices.SortFunc(procs, func(a, b Process) int {
@@ -194,24 +168,28 @@ func (f *FS) PIDs() ([]int, error) {
 	return pids, nil
 }
 
-// ProcessesInCgroup returns the processes whose cgroup path matches exactly,
-// sorted by descending RSS so the biggest consumer leads.
+// ProcessesWithPIDs reads the given PIDs, sorted by descending RSS so the
+// biggest consumer leads.
 //
-// This is how the post-mortem builds its list of surviving hog processes after
-// a container has lost one of its own.
-func (f *FS) ProcessesInCgroup(cgroupPath string) ([]Process, error) {
-	all, err := f.Processes()
-	if err != nil {
-		return nil, err
-	}
-
-	matched := make([]Process, 0, len(all))
-	for _, proc := range all {
-		if proc.CgroupPath == cgroupPath {
-			matched = append(matched, proc)
+// The PIDs come from the kernel's cgroup.procs rather than from matching
+// /proc/<pid>/cgroup, because that file is written relative to the reading
+// process's cgroup namespace and an unprivileged pod is put in a private one.
+// See cgroup.FS.ProcsIn.
+//
+// A PID that cannot be read is skipped. On a live node that is the normal case:
+// cgroup.procs is a snapshot, and a process listed in it can exit before this
+// runs. It is also exactly what happens while a container is being torn down,
+// which is when this is most often called.
+func (f *FS) ProcessesWithPIDs(pids []int) []Process {
+	procs := make([]Process, 0, len(pids))
+	for _, pid := range pids {
+		proc, err := f.Process(pid)
+		if err != nil {
+			continue
 		}
+		procs = append(procs, proc)
 	}
-	sortByMemory(matched)
+	sortByMemory(procs)
 
-	return matched, nil
+	return procs
 }
