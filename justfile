@@ -190,24 +190,22 @@ install:
 
 # Preview the next release without writing anything
 release-preview bump="auto":
-    @git cliff --bump {{bump}} --bumped-version | xargs -I{} echo "next: v{}"
-    @echo "── changelog preview ──"
-    @git cliff --bump {{bump}} --unreleased
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # git-cliff returns the version v-prefixed once a tag exists and bare
+    # otherwise, so normalise here rather than assuming either. Prefixing
+    # unconditionally printed "vv0.1.0" for the first release.
+    ver=$(git cliff --bump {{bump}} --bumped-version)
+    case "$ver" in v*) ;; *) ver="v$ver" ;; esac
+    echo "next: $ver"
+    echo "── changelog preview ──"
+    git cliff --bump {{bump}} --unreleased
 
 # Cut a release: bump (auto/patch/minor/major) or explicit vX.Y.Z. Writes CHANGELOG.md, tags and pushes; the Release workflow publishes.
 release bump="auto":
     #!/usr/bin/env bash
     set -euo pipefail
     if ! git diff-index --quiet HEAD --; then echo "✗ working tree dirty"; exit 1; fi
-    # Hand-written notes under [Unreleased] describe this release, not a future
-    # one, and nothing below can move them: git-cliff appends a section of its
-    # own and cannot know they belong inside it. Stop here rather than tag a
-    # release whose breaking changes sit under a heading saying "unreleased".
-    if awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f && NF && !/^<!--/' CHANGELOG.md | grep -q .; then
-      echo "✗ CHANGELOG.md has notes under [Unreleased]"
-      echo "  Rename that heading to the version you are cutting, then re-run."
-      exit 1
-    fi
     case "{{bump}}" in
       v[0-9]*)                       new_ver="{{bump}}" ;;
       auto|patch|minor|major)        new_ver=$(git cliff --bump {{bump}} --bumped-version) ;;
@@ -217,12 +215,16 @@ release bump="auto":
     if git rev-parse "$new_ver" >/dev/null 2>&1; then echo "✗ tag $new_ver already exists"; exit 1; fi
     just check
     echo "▶ releasing $new_ver"
-    # --prepend, not -o. `-o` regenerates the whole file from commit subjects,
-    # silently deleting every hand-written breaking-change and migration note:
-    # exactly the content a release exists to carry, and the content no commit
-    # subject can reconstruct. --prepend inserts the generated section under the
-    # header and leaves the rest of the file alone.
-    git cliff --tag "$new_ver" --unreleased --prepend CHANGELOG.md
+    # Merged into [Unreleased], not prepended above it. `-o` would regenerate
+    # the whole file from commit subjects and delete every hand-written note;
+    # `--prepend` keeps them but puts the generated section above, leaving two
+    # headings for one version, and release-notes.sh reads only the first. Both
+    # ship a release whose breaking changes are missing. changelog-release.sh
+    # closes [Unreleased] and folds the generated groups in under the prose.
+    gen=$(mktemp)
+    trap 'rm -f "$gen"' EXIT
+    git cliff --tag "$new_ver" --unreleased > "$gen"
+    ./hack/changelog-release.sh "$new_ver" "$gen" CHANGELOG.md
     git add CHANGELOG.md
     git diff --cached --quiet || git commit -m "chore(release): $new_ver"
     # Prove the notes exist before the tag goes out. The Release workflow runs

@@ -16,6 +16,18 @@ changelog="${2:-CHANGELOG.md}"
 # git-cliff writes headings as "## [0.1.0] - 2026-09-05", with no leading v.
 want="${version#v}"
 
+# Two headings for one version means the section was prepended rather than
+# merged, and the awk below stops at the first: the generated commit list,
+# without the hand-written breaking changes sitting under the second. That was
+# silent once, and a release with no migration notes reads as a fine release.
+sections=$(grep -c "^## \[${want}\]" "$changelog" || true)
+if [ "$sections" -gt 1 ]; then
+  echo "$changelog has $sections sections for $version, expected 1" >&2
+  echo "notes would stop at the first, dropping everything written below it" >&2
+  echo "merge them into one section (hack/changelog-release.sh does this)" >&2
+  exit 1
+fi
+
 # Buffering in awk rather than piping through tac: tac is GNU-only and this has
 # to run on a maintainer's Mac as well as on a runner.
 notes=$(awk -v want="$want" '

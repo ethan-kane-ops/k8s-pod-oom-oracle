@@ -66,5 +66,15 @@ commit_parsers = [
 ]
 
 [bump]
+# Without this, the first release cannot be computed at all. With no tags to
+# bump from, git-cliff proposes a bare "0.1.0", then checks it against
+# tag_pattern above ("v[0-9].*"), which it cannot match because it has no v:
+#
+#   Changelog error: `Next version (0.1.0) does not match the tag pattern`
+#
+# Every bump mode failed on that, so `just release-preview` and `just release
+# auto|patch|minor|major` were all broken until a tag existed. Only the explicit
+# `just release vX.Y.Z` form worked, because it never asks git-cliff to bump.
+initial_tag = "v0.1.0"
 features_always_bump_minor = true
 breaking_always_bump_major = true
