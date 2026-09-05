@@ -42,6 +42,7 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Dashboard: dashboard.md
   - Detectors: detectors.md
   - Correlation: correlation.md
   - Configuration: configuration.md

@@ -32,6 +32,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(
 		newDaemonCmd(),
 		newInspectCmd(),
+		newWatchCmd(),
 		newVersionCmd(),
 	)
 

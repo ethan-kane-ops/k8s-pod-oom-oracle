@@ -7,8 +7,8 @@
 
 A node agent that explains Kubernetes OOM kills at the level the control plane
 cannot: which process died, how much memory it held at the moment the kernel
-chose it, what the memory curve looked like on the way there, and what was still
-running afterwards.
+chose it, what the memory curve looked like on the way there, and what else was
+in the container when it happened.
 
 **📖 [Full documentation](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/)**
 
@@ -54,6 +54,8 @@ VICTIM PROCESS:
   Confidence:      traced in the kernel at the moment of the kill.
 
 PROCESSES IN CONTAINER AFTER THE KILL:
+  memory.oom.group=0: the kernel killed only the process it
+  selected, so these were still running after it died.
   1. node ./dist/server.js (PID 28102) - 390.0MiB
   2. node ./dist/worker.js (PID 28160) - 8.0MiB
 ```
@@ -89,6 +91,7 @@ kubectl -n oom-oracle rollout status daemonset/oom-oracle
 
 ```bash
 kubectl -n oom-oracle port-forward pod/<agent-pod> 9090:9090
+oom-oracle watch                        # live dashboard
 oom-oracle inspect                      # every recorded kill, newest first
 oom-oracle inspect payment-api-6d5f78   # one pod
 oom-oracle inspect -n default -o json   # filtered, machine-readable
@@ -105,6 +108,7 @@ in [`examples/workloads/`](examples/workloads/).
 | | |
 |---|---|
 | [Getting Started](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/getting-started/) | Install, deploy, trigger a kill, read the report |
+| [Dashboard](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/dashboard/) | The live terminal view, and its keys |
 | [Detectors](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/detectors/) | eBPF versus polling, and why one is a fallback |
 | [Correlation](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/correlation/) | Cgroup path to pod name, the informer, and RBAC |
 | [Configuration](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/configuration/) | Every flag on every command |
@@ -122,11 +126,11 @@ Pre-release. No version has been tagged, so `main` is the only thing to run and
 the HTTP API and report JSON may still change shape.
 
 Working today: both detectors, cgroup v1 and v2 sampling, pod-name correlation,
-the HTTP API, the text and JSON renderers, and an e2e suite that runs on kind in
-CI.
+the HTTP API, the text and JSON renderers, the terminal dashboard, and an e2e
+suite that runs on kind in CI.
 
-Not built yet: an interactive TUI dashboard, a Helm chart and Artifact Hub
-listing, and published multi-arch signed releases.
+Not built yet: a Helm chart and Artifact Hub listing, and published multi-arch
+signed releases.
 
 [ROADMAP.md](./ROADMAP.md) has the full picture, including the known limitations
 worth reading before you deploy this on anything you care about.

@@ -1,0 +1,32 @@
+oom-oracle  http://127.0.0.1:9090
+detector poller (victims are inferred, not traced)  node node-1  ready
+reports 2  tracking 48  unattributed 0
+╭────────────────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ▌ 09:15:22 payment-api-6d5f78/web… node        ││ POD: payment-api-6d5f78 (namespace: default)                                                                       │
+│   09:15:00 worker-pool-99fabc/wor… python      ││ CONTAINER: web-server (image: payment:v1.2.0)                                                                      │
+│                                                ││ QOS: Burstable                                                                                                     │
+│                                                ││                                                                                                                    │
+│                                                ││ DIAGNOSIS: OOMKilled (2026-08-13 08:15:22 UTC)                                                                     │
+│                                                ││   Limit:        512.0MiB                                                                                           │
+│                                                ││   Peak usage:   512.0MiB                                                                                           │
+│                                                ││   Kill count:   1                                                                                                  │
+│                                                ││   Detected by:  ebpf                                                                                               │
+│                                                ││   Growth rate:  1.0MiB/s (fit R²=0.97 over 1m0s)                                                                   │
+│                                                ││                                                                                                                    │
+│                                                ││ MEMORY TRAJECTORY (last 1m0s):                                                                                     │
+│                                                ││   08:14:22:  412.0MiB / 512.0MiB  [██████████████░░░░]  80%                                                        │
+│                                                ││   08:14:37:  460.0MiB / 512.0MiB  [████████████████░░]  90%  (stall 12%)                                           │
+│                                                ││   08:14:52:  498.0MiB / 512.0MiB  [█████████████████░]  97%  (stall 24%)                                           │
+│                                                ││   08:15:07:  507.0MiB / 512.0MiB  [█████████████████░]  99%  (stall 36%)                                           │
+│                                                ││   08:15:22:  512.0MiB / 512.0MiB  [██████████████████] 100%  (stall 48%)                                           │
+│                                                ││                                                                                                                    │
+│                                                ││ VICTIM PROCESS:                                                                                                    │
+│                                                ││   PID:             28145 (in container: 17)                                                                        │
+│                                                ││   Command:         node ./server.js                                                                                │
+│                                                ││   Exit code:       137 (OOM)                                                                                       │
+│                                                ││   Memory at death: 114.0MiB                                                                                        │
+│                                                ││   Confidence:      inferred, not traced.                                                                           │
+│                                                ││                    This process vanished between samples and held the                                              │
+│                                                ││                    most memory. Run with the eBPF detector for an exact                                            │
+╰────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ move  tab pane  r refresh  q quit  updated 2s ago

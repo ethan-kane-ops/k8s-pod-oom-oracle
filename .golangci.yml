@@ -105,6 +105,17 @@ linters:
         text: "SA4023"
         linters:
           - staticcheck
+      # The Elm architecture bubbletea implements passes the model by value:
+      # tea.Model's Init, Update and View are value methods, and Update returns
+      # a new model rather than mutating one. The dashboard model is around 1.4KB
+      # and is copied a few times per keystroke, which is human-scale. The
+      # threshold above is sized for the sampler's per-second-per-cgroup path and
+      # says nothing useful here, and taking a pointer receiver would not satisfy
+      # the interface anyway.
+      - path: internal/tui/.*\.go
+        text: "hugeParam"
+        linters:
+          - gocritic
       # bpf2go output is machine-generated and not ours to style.
       - path: internal/detector/bpf/.*_bpf.*\.go
         linters:
