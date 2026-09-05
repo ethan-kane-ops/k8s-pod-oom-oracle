@@ -2,8 +2,8 @@ oom-oracle  http://127.0.0.1:9090
 detector ebpf  node node-1  ready
 reports 2  tracking 48  unattributed 3
 ╭────────────────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ▌ 09:15:22 payment-api-6d5f78/web… node        ││ POD: payment-api-6d5f78 (namespace: default)                                                                       │
-│   09:15:00 worker-pool-99fabc/wor… python      ││ CONTAINER: web-server (image: payment:v1.2.0)                                                                      │
+│ ▌ 08:15:22 payment-api-6d5f78/web… node        ││ POD: payment-api-6d5f78 (namespace: default)                                                                       │
+│   08:15:00 worker-pool-99fabc/wor… python      ││ CONTAINER: web-server (image: payment:v1.2.0)                                                                      │
 │                                                ││ QOS: Burstable                                                                                                     │
 │                                                ││                                                                                                                    │
 │                                                ││ DIAGNOSIS: OOMKilled (2026-08-13 08:15:22 UTC)                                                                     │

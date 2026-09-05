@@ -23,15 +23,22 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
-// Colour is disabled for the whole package. lipgloss decides on escape codes
-// from the terminal it detects, so golden files written on a developer's
-// terminal would not match the ones CI produces. The layout is what these
-// assert on, and the layout is what has to survive a refactor.
+// Colour and timezone are pinned for the whole package.
+//
+// Both leak the developer's machine into a golden file. lipgloss decides on
+// escape codes from the terminal it detects, and the list renders each report's
+// time in local time, which is the right thing for an operator reading their own
+// node and the wrong thing for a file compared byte for byte. Goldens written on
+// a Mac in BST failed on a Linux runner in UTC by exactly one hour.
+//
+// The layout is what these assert on, and the layout is what has to survive a
+// refactor.
 func TestMain(m *testing.M) {
 	// termenv.Ascii, not a bare zero: termenv numbers TrueColor as 0 and Ascii
 	// as 3, so passing 0 here selects full colour and writes escape codes into
 	// every golden file.
 	lipgloss.SetColorProfile(termenv.Ascii)
+	time.Local = time.UTC
 	os.Exit(m.Run())
 }
 
