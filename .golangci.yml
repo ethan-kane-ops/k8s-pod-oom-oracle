@@ -94,6 +94,17 @@ linters:
         text: "(hugeParam|rangeValCopy)"
         linters:
           - gocritic
+      # SA4023 is correct here and only for the non-Linux build. NewEBPF is an
+      # exact-complement build pair; the !linux half always returns a non-nil
+      # error, so staticcheck can prove `err == nil` unreachable when it
+      # analyses darwin. On linux the same branch is the primary path. The
+      # variance is the point of the fallback, so there is nothing to restructure.
+      # A //nolint cannot express this either: nolintlint runs with
+      # allow-unused: false, so the directive would itself be flagged on linux.
+      - path: internal/cmd/daemon\.go
+        text: "SA4023"
+        linters:
+          - staticcheck
       # bpf2go output is machine-generated and not ours to style.
       - path: internal/detector/bpf/.*_bpf.*\.go
         linters:
