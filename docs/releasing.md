@@ -91,12 +91,22 @@ worse than no chart, because it looks authoritative.
 Registration is manual, one-off, and needs a public repository with a published
 chart. Both are now true.
 
-1. Add the repository at [artifact hub](https://artifacthub.io/control-panel/repositories)
-   as a **Helm charts** repository of kind OCI, with the URL
-   `oci://ghcr.io/ethan-kane-ops/charts/oom-oracle`.
-2. Copy the repository ID it issues into
-   `charts/oom-oracle/artifacthub-repo.yml`, along with the email on the
-   Artifact Hub account.
+1. Add the repository at [artifact hub](https://artifacthub.io/control-panel/repositories):
+
+   | Field | Value |
+   |---|---|
+   | Kind | Helm charts |
+   | Name | `oom-oracle` |
+   | Display name | `oom-oracle` |
+   | URL | `oci://ghcr.io/ethan-kane-ops/charts/oom-oracle` |
+
+   The name becomes the URL segment, so the listing lands at
+   `artifacthub.io/packages/helm/oom-oracle/oom-oracle`. An OCI repository holds
+   one chart, so naming it after the chart rather than the owner keeps a second
+   chart from having to squat on the name.
+
+2. Copy the repository ID it issues into `artifacthub-repo.yml` at the
+   repository root.
 3. `just chart-claim`.
 
 Step 3 pushes that file to the chart's OCI repository under the `artifacthub.io`
@@ -104,8 +114,10 @@ tag, which is where Artifact Hub looks to confirm the listing belongs to this
 project. Without it the chart still lists; it just is not a verified publisher.
 
 The ordering is the part worth knowing: the ID does not exist until step 1, so
-the file cannot be filled in ahead of time. `just chart-claim` refuses to push
-a half-empty one. Both values it publishes are readable by anyone.
+the file cannot be filled in ahead of time, and `just chart-claim` refuses to
+push it empty. The owner name and email in that file are published to a public
+registry, and the email has to match the Artifact Hub account because that match
+is the ownership check.
 
 ## Version metadata
 

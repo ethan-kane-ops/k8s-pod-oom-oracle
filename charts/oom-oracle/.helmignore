@@ -16,7 +16,3 @@
 .idea/
 *.tmproj
 .vscode/
-# Registry metadata, not chart content. It is pushed to the OCI repository as
-# its own artifact by `just chart-claim`, and packaging it would put an empty
-# repositoryID inside every release of the chart.
-artifacthub-repo.yml

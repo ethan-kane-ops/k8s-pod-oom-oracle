@@ -296,18 +296,16 @@ chart-template *args:
 chart-claim:
     #!/usr/bin/env bash
     set -euo pipefail
-    meta=charts/{{binary}}/artifacthub-repo.yml
+    meta=artifacthub-repo.yml
     id=$(awk '/^repositoryID:/ {print $2}' "$meta" | tr -d '"')
-    email=$(awk '/^ *email:/ {print $2}' "$meta" | tr -d '"')
-    if [ -z "$id" ] || [ -z "$email" ]; then
-      echo "✗ $meta is not filled in yet"
-      echo "  Add the repository on artifacthub.io, then copy its ID and the"
-      echo "  account's email in. Both are published to a public registry."
+    if [ -z "$id" ]; then
+      echo "✗ $meta has no repositoryID"
+      echo "  Add the repository on artifacthub.io first; it issues the ID."
       exit 1
     fi
     # A separate artifact on the chart's repository under a fixed tag, which is
-    # where Artifact Hub looks. It is not part of the chart and .helmignore
-    # keeps it out of the package.
+    # where Artifact Hub looks. It lives at the repository root rather than in
+    # charts/, so it is never packaged into the chart.
     oras push "ghcr.io/ethan-kane-ops/charts/{{binary}}:artifacthub.io" \
       --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
       "${meta}:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"

@@ -1,0 +1,19 @@
+# Artifact Hub repository metadata.
+#
+# Not part of the chart, and not published with it. `just chart-claim` pushes
+# this to the chart's OCI repository under the `artifacthub.io` tag, which is
+# where Artifact Hub looks to confirm the listing belongs to this project. That
+# is what makes it a verified publisher.
+#
+# repositoryID is issued by Artifact Hub when the repository is added there, so
+# the listing has to exist before this can be filled in. See docs/releasing.md.
+#
+# Both fields are published to a public registry and readable by anyone. The
+# email has to match the one on the Artifact Hub account, because that match is
+# the ownership check.
+
+repositoryID: ""
+
+owners:
+  - name: Ethan Kane
+    email: ethan.kane.ops@gmail.com
