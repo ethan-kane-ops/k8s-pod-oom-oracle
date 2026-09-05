@@ -14,7 +14,10 @@ What works end to end, verified on a real kernel rather than fixtures:
 - **Detection** by a CO-RE eBPF kprobe on `oom_kill_process`, with a cgroup
   polling detector as the fallback when BTF is absent or `bpf()` is denied.
 - **Attribution** of a kill to a named process, its container-local PID, its
-  resident memory, and the processes that survived it.
+  resident memory, and the container's other processes as they stood at the
+  moment of the kill. That listing is a snapshot rather than a survivor list:
+  containerd sets `memory.oom.group=1`, so the kernel usually kills the whole
+  container and nothing in it survives.
 - **Correlation** from a cgroup path to `namespace/pod/container` through a
   node-scoped pod informer, so reports name workloads rather than UIDs.
 - **Trajectory**, the memory samples leading up to the kill, plus the peak and
@@ -23,15 +26,15 @@ What works end to end, verified on a real kernel rather than fixtures:
 
 ## Next: reaching a first release
 
-1. **Example workloads and sample deployments.** The manifests in `deploy/`
-   install the daemon; nothing yet demonstrates the failure modes it exists to
-   explain.
-2. **Helm chart**, published to Artifact Hub.
-3. **Release pipeline**: goreleaser, multi-arch images, cosign signing and an
+1. **Terminal dashboard**, a live view rather than one report at a time.
+2. **Release pipeline**: goreleaser, multi-arch images, cosign signing and an
    SBOM. Until this lands, [SECURITY.md](./SECURITY.md) cannot promise verifiable
    artifacts, and it does not.
-4. **Documentation site** on GitHub Pages.
-5. **Terminal dashboard**, a live view rather than one report at a time.
+3. **Helm chart**, published to Artifact Hub.
+
+Shipped since this list was written: runnable
+[example workloads](./examples/), and a
+[documentation site](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/).
 
 ## Known limitations, and what would fix them
 

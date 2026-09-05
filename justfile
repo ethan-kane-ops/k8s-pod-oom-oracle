@@ -197,6 +197,15 @@ release bump="auto":
     #!/usr/bin/env bash
     set -euo pipefail
     if ! git diff-index --quiet HEAD --; then echo "✗ working tree dirty"; exit 1; fi
+    # Hand-written notes under [Unreleased] describe this release, not a future
+    # one, and nothing below can move them: git-cliff appends a section of its
+    # own and cannot know they belong inside it. Stop here rather than tag a
+    # release whose breaking changes sit under a heading saying "unreleased".
+    if awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f && NF && !/^<!--/' CHANGELOG.md | grep -q .; then
+      echo "✗ CHANGELOG.md has notes under [Unreleased]"
+      echo "  Rename that heading to the version you are cutting, then re-run."
+      exit 1
+    fi
     case "{{bump}}" in
       v[0-9]*)                       new_ver="{{bump}}" ;;
       auto|patch|minor|major)        new_ver=$(git cliff --bump {{bump}} --bumped-version) ;;
@@ -206,7 +215,12 @@ release bump="auto":
     if git rev-parse "$new_ver" >/dev/null 2>&1; then echo "✗ tag $new_ver already exists"; exit 1; fi
     just check
     echo "▶ releasing $new_ver"
-    git cliff --tag "$new_ver" -o CHANGELOG.md
+    # --prepend, not -o. `-o` regenerates the whole file from commit subjects,
+    # silently deleting every hand-written breaking-change and migration note:
+    # exactly the content a release exists to carry, and the content no commit
+    # subject can reconstruct. --prepend inserts the generated section under the
+    # header and leaves the rest of the file alone.
+    git cliff --tag "$new_ver" --unreleased --prepend CHANGELOG.md
     git add CHANGELOG.md
     git diff --cached --quiet || git commit -m "chore(release): $new_ver"
     git tag -a "$new_ver" -m "Release $new_ver"
