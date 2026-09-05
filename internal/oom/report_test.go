@@ -1,6 +1,8 @@
 package oom
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -280,3 +282,42 @@ func TestReportWindow(t *testing.T) {
 		})
 	}
 }
+
+// TestGroupKillSerialisesAsATriState pins the wire contract the API reference
+// promises. The field must be a nullable boolean, and an unknown must reach a
+// consumer as an explicit null rather than being dropped from the object.
+//
+// `omitempty` would break this silently: a missing key and a false both decode
+// to false in most clients, which is exactly the conflation the tri-state
+// exists to prevent. A consumer that reads it as false reports that a container
+// survived a kill nothing observed.
+func TestGroupKillSerialisesAsATriState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value *bool
+		want  string
+	}{
+		{name: "unknown is an explicit null", value: nil, want: `"groupKill":null`},
+		{name: "group kill is true", value: ptr(true), want: `"groupKill":true`},
+		{name: "single process kill is false", value: ptr(false), want: `"groupKill":false`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			encoded, err := json.Marshal(Report{GroupKill: tt.value})
+			if err != nil {
+				t.Fatalf("Marshal() error = %v", err)
+			}
+			if !strings.Contains(string(encoded), tt.want) {
+				t.Errorf("Marshal() = %s, want it to contain %s", encoded, tt.want)
+			}
+		})
+	}
+}
+
+// ptr is the shortest way to build the pointer a tri-state field needs.
+func ptr[T any](v T) *T { return &v }

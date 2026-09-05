@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -201,22 +202,27 @@ func TestMultiProcessContainerNamesTheVictim(t *testing.T) {
 	}
 	t.Logf("runtime: memory.oom.group=%s terminated=%q", groupKill, terminatedReason(t, name))
 
-	// Only one direction is safe to assert. The report's flag is set from a read
-	// of the container's cgroup at report time, and under group kill that cgroup
-	// is often already torn down, so false legitimately means "could not tell".
-	// True is never a guess, so it must agree with the node.
-	if found.GroupKill && groupKill != "1" {
-		t.Errorf("report says groupKill=true but the container scope reports "+
-			"memory.oom.group=%q", groupKill)
+	// Both directions are now safe to assert. The flag used to be read when the
+	// report was assembled, by which time group kill had usually destroyed the
+	// cgroup holding the answer, so false conflated "did not group-kill" with
+	// "could not tell" and only the true direction meant anything. The flag is
+	// now read at detection time and is nil when the read failed, so any value
+	// that is present came from an actual read of the cgroup and must agree with
+	// what the node reports.
+	if found.GroupKill != nil {
+		if want := groupKill == "1"; *found.GroupKill != want {
+			t.Errorf("report says groupKill=%t but the container scope reports "+
+				"memory.oom.group=%q", *found.GroupKill, groupKill)
+		}
 	}
 
 	assertResolved(t, found, name, "app")
 
-	t.Logf("report: source=%s pod=%s/%s/%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t processes=%d groupKill=%t",
+	t.Logf("report: source=%s pod=%s/%s/%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t processes=%d groupKill=%s",
 		found.Source, found.Identity.Namespace, found.Identity.PodName,
 		found.Identity.ContainerName, found.Victim.Comm, found.Victim.PID,
 		found.Victim.NSPid, found.Victim.RSSBytes, found.Victim.Inferred,
-		len(found.Processes), found.GroupKill)
+		len(found.Processes), tristate(found.GroupKill))
 
 	// The eBPF detector reads the victim out of the kernel, so it can state
 	// things the poller can only guess at. Only hold it to that standard.
@@ -380,6 +386,15 @@ func waitForReport(t *testing.T, daemon, podName string, before int, uid string)
 			uid, len(reports), before)
 	}, func() string { return podDiagnostics(t, podName) })
 	return found
+}
+
+// tristate renders a nullable bool for a log line, where %t would print a
+// pointer and hide the case worth seeing.
+func tristate(v *bool) string {
+	if v == nil {
+		return "unknown"
+	}
+	return strconv.FormatBool(*v)
 }
 
 // containerGroupKill reports the pod's container-scope memory.oom.group, as "0",

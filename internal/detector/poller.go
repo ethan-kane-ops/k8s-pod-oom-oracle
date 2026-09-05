@@ -233,10 +233,31 @@ func (p *Poller) detectLocked(paths []string) []KillEvent {
 			Victim:     p.inferVictimLocked(path),
 			KillCount:  current,
 			Source:     SourcePoller,
+			GroupKill:  p.readGroupKill(path),
 		})
 	}
 
 	return events
+}
+
+// readGroupKill reads memory.oom.group for a cgroup, or reports that it could
+// not be read.
+//
+// The poller is always late: it learns of a kill from a counter on the next
+// pass, by which time a group-killed container may already be gone. Reading here
+// rather than at report time still shortens the window, and a nil result is
+// reported as unknown rather than flattened into false. Tracing the kill is what
+// closes the window properly, which is what the eBPF detector is for.
+func (p *Poller) readGroupKill(path string) *bool {
+	if p.cgroup == nil {
+		return nil
+	}
+	groupKill, err := p.cgroup.ReadOOMGroup(path)
+	if err != nil {
+		p.log.Debug("reading memory.oom.group", "cgroup", path, "error", err)
+		return nil
+	}
+	return &groupKill
 }
 
 // inferVictimLocked deduces which process died.

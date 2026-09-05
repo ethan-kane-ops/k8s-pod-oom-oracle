@@ -66,6 +66,7 @@ find /sys/fs/cgroup -path '*cri-containerd*' -name memory.oom.group \
 ```
 
 Or read it from the report: `groupKill` is the same value, read by the daemon.
+It is `null` rather than `false` when the daemon could not read it at all.
 
 !!! warning "Do not use pod phase as evidence of survival"
     `kubectl get pod` reads `Running` for about a second after the container is
@@ -77,16 +78,22 @@ Or read it from the report: `groupKill` is the same value, read by the daemon.
 
 ```
 PROCESSES IN CONTAINER AFTER THE KILL:
+  memory.oom.group=1: the kernel killed every process in this
+  container, so the list below is a teardown snapshot rather than
+  survivors, and resident sizes are already collapsing.
   1. node ./dist/server.js (PID 28102) - 390.0MiB
   2. node ./dist/worker.js (PID 28160) - 8.0MiB
 ```
 
-Under group kill this is a teardown snapshot rather than a survivor list.
-Entries will be missing and resident sizes read low or zero, because the kernel
-is already reclaiming them. It is still useful for seeing what else was in the
-container, and it never contains the victim.
+The line under the heading changes with what was actually read. Under group kill
+this is a teardown snapshot rather than a survivor list: entries will be missing
+and resident sizes read low or zero, because the kernel is already reclaiming
+them. It is still useful for seeing what else was in the container, and it never
+contains the victim.
 
-Under `memory.oom.group=0` it is a genuine survivor list.
+Under `memory.oom.group=0` the renderer says so, and it is a genuine survivor
+list. When the setting could not be read at all it says that instead, rather than
+borrowing either claim.
 
 ## When the victim is unknown
 

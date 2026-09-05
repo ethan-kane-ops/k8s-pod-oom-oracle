@@ -229,13 +229,23 @@ func (d *Daemon) buildReport(event detector.KillEvent) (oom.Report, bool) {
 // applyGroupKill records whether the cgroup is killed as an indivisible unit,
 // which decides what the process listing means.
 //
-// A false result means "not observed", not "the container survives". Under group
-// kill the container is already gone, so its cgroup is often torn down before
-// this read happens and the answer is simply unavailable. Nothing downstream may
-// therefore read false as a promise that anything survived, which is why the
-// renderer states survival only when this is known to be false and never as the
-// default.
+// The detector's own reading wins whenever it has one. It was taken at detection
+// time, and for the eBPF detector that is inside the pre-SIGKILL window, with the
+// cgroup still present. Re-reading here would overwrite a fact with a guess: by
+// report time a group-killed container is usually gone, and the read that fails
+// is the one describing the case the flag exists for.
+//
+// The late read survives only as a fallback for a detector that supplied nothing.
+// When that fails too the field stays nil, which serialises as null and means
+// "not established" rather than false. Nothing downstream may read a missing
+// value as a promise that anything survived, which is why the renderer claims
+// survival only when the flag is explicitly false.
 func (d *Daemon) applyGroupKill(report *oom.Report, event detector.KillEvent) {
+	if event.GroupKill != nil {
+		groupKill := *event.GroupKill
+		report.GroupKill = &groupKill
+		return
+	}
 	if d.cgroup == nil {
 		return
 	}
@@ -245,7 +255,7 @@ func (d *Daemon) applyGroupKill(report *oom.Report, event detector.KillEvent) {
 			"cgroup", event.CgroupPath, "error", err)
 		return
 	}
-	report.GroupKill = groupKill
+	report.GroupKill = &groupKill
 }
 
 // applyLiveStats corrects the headline numbers using the cgroup itself.

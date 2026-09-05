@@ -65,8 +65,15 @@ func fullReport() oom.Report {
 			{PID: 28102, NSPid: 1, Comm: "node", Cmdline: []string{"node", "./dist/server.js"}, RSSBytes: 390 << 20},
 			{PID: 28160, NSPid: 22, Comm: "node", Cmdline: []string{"node", "./dist/worker.js"}, RSSBytes: 8 << 20},
 		},
+		// Explicitly false rather than left nil, so the fixtures built on this
+		// exercise a report whose group-kill state was actually established.
+		// The nil case is a test of its own.
+		GroupKill: ptr(false),
 	}
 }
+
+// ptr is the shortest way to build the pointer a tri-state field needs.
+func ptr[T any](v T) *T { return &v }
 
 func TestTextGolden(t *testing.T) {
 	t.Parallel()
@@ -129,7 +136,27 @@ func TestTextGolden(t *testing.T) {
 			name: "group_kill",
 			report: func() oom.Report {
 				r := fullReport()
-				r.GroupKill = true
+				r.GroupKill = ptr(true)
+				return r
+			},
+		},
+		{
+			// The only state in which the listing really is a survivor list,
+			// and the only one allowed to say so.
+			name: "single_process_kill",
+			report: func() oom.Report {
+				r := fullReport()
+				r.GroupKill = ptr(false)
+				return r
+			},
+		},
+		{
+			// The cgroup was gone before anything could read it. Saying nothing
+			// about survival is the only honest option.
+			name: "group_kill_unknown",
+			report: func() oom.Report {
+				r := fullReport()
+				r.GroupKill = nil
 				return r
 			},
 		},

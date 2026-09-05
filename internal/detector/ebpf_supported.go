@@ -186,6 +186,19 @@ func (d *ebpfDetector) enrich(raw rawEvent) KillEvent {
 		if stats, err := d.cgroup.ReadMemoryStats(event.CgroupPath); err == nil {
 			event.KillCount = stats.OOMKills()
 		}
+
+		// memory.oom.group has to be read here rather than when the report is
+		// assembled. Under group kill the runtime tears the cgroup down as the
+		// container dies, so a later read finds nothing and the flag reads
+		// false for the exact case it exists to describe. This runs inside the
+		// same pre-SIGKILL window that makes the victim's /proc entry readable,
+		// where the cgroup is still there.
+		if groupKill, err := d.cgroup.ReadOOMGroup(event.CgroupPath); err == nil {
+			event.GroupKill = &groupKill
+		} else {
+			d.log.Debug("reading memory.oom.group",
+				"cgroup", event.CgroupPath, "error", err)
+		}
 	}
 
 	return event

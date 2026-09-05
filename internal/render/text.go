@@ -159,21 +159,28 @@ func writeVictim(b *strings.Builder, report *oom.Report) {
 
 // writeProcesses lists the container's other processes.
 //
-// The heading deliberately does not claim survival. Report.GroupKill is false
-// both when the container really does survive and when the daemon could not tell,
-// so a "SURVIVING PROCESSES" heading would assert something unproven every time
-// the cgroup was torn down before it could be read. Stating what was observed,
-// and adding the group-kill caveat only when it is known, is true either way.
+// The heading deliberately does not claim survival, because the same heading has
+// to be true in all three states. What the listing means is stated underneath it,
+// and only ever from what was actually read: a nil GroupKill says so rather than
+// borrowing the wording of a container that survived.
 func writeProcesses(b *strings.Builder, report *oom.Report) {
 	if len(report.Processes) == 0 {
 		return
 	}
 
 	b.WriteString("\nPROCESSES IN CONTAINER AFTER THE KILL:\n")
-	if report.GroupKill {
+	switch {
+	case report.GroupKill == nil:
+		b.WriteString("  memory.oom.group could not be read, so whether these processes\n" +
+			"  outlived the kill was never established. Treat the list as a\n" +
+			"  snapshot, not as survivors.\n")
+	case *report.GroupKill:
 		b.WriteString("  memory.oom.group=1: the kernel killed every process in this\n" +
 			"  container, so the list below is a teardown snapshot rather than\n" +
 			"  survivors, and resident sizes are already collapsing.\n")
+	default:
+		b.WriteString("  memory.oom.group=0: the kernel killed only the process it\n" +
+			"  selected, so these were still running after it died.\n")
 	}
 
 	procs := report.Processes

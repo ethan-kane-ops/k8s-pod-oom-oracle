@@ -192,6 +192,17 @@ func TestReadOOMGroup(t *testing.T) {
 			want:   false,
 			wantOK: true,
 		},
+		{
+			// The case the flag exists to describe destroys the cgroup that
+			// answers it. An error here is what lets a caller say "unknown"
+			// instead of "did not group-kill", which is the opposite of the
+			// truth for a container the kernel took down as a unit.
+			name:   "a cgroup that no longer exists errors rather than reporting false",
+			root:   v2Fixture,
+			path:   container + "-gone",
+			want:   false,
+			wantOK: false,
+		},
 	}
 
 	for _, tt := range tests {
