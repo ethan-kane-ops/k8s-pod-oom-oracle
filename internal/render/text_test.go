@@ -69,6 +69,8 @@ func fullReport() oom.Report {
 		// exercise a report whose group-kill state was actually established.
 		// The nil case is a test of its own.
 		GroupKill: ptr(false),
+		// The ordinary case: the daemon and the kernel agree on PIDs.
+		VictimMatch: oom.VictimMatchHostPID,
 	}
 }
 
@@ -157,6 +159,16 @@ func TestTextGolden(t *testing.T) {
 			report: func() oom.Report {
 				r := fullReport()
 				r.GroupKill = nil
+				return r
+			},
+		},
+		{
+			// The regression the NSPid fallback exists to prevent. The listing
+			// may still name the dead process, and only this line says so.
+			name: "victim_unmatched",
+			report: func() oom.Report {
+				r := fullReport()
+				r.VictimMatch = oom.VictimMatchNone
 				return r
 			},
 		},

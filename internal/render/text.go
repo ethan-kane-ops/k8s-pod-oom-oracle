@@ -169,6 +169,16 @@ func writeProcesses(b *strings.Builder, report *oom.Report) {
 	}
 
 	b.WriteString("\nPROCESSES IN CONTAINER AFTER THE KILL:\n")
+
+	// The victim should never be in this list. When it is, the listing names a
+	// process the kernel has already killed, and nothing else in the output
+	// gives that away: the entry has a plausible PID and a plausible size.
+	if report.Victim.Known && report.VictimMatch == oom.VictimMatchNone {
+		b.WriteString("  The victim could not be matched against this listing, so it may\n" +
+			"  still appear below. Its host PID and container PID both failed to\n" +
+			"  match any entry.\n")
+	}
+
 	switch {
 	case report.GroupKill == nil:
 		b.WriteString("  memory.oom.group could not be read, so whether these processes\n" +

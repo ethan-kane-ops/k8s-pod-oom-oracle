@@ -74,6 +74,13 @@ type Report struct {
 	// sizes already collapsing towards zero. When it is nil, which of the two
 	// this is was never established.
 	Processes []ProcessSnapshot `json:"processes"`
+	// VictimMatch records which identifier removed the victim from Processes.
+	//
+	// "none" with a known victim means the filter did not fire and the listing
+	// still names a dead process. "nsPid" means the daemon and the kernel do not
+	// share a PID namespace, which is normal under a nested runtime and worth
+	// knowing when the numbers in a report look unrelated to each other.
+	VictimMatch VictimMatch `json:"victimMatch"`
 	// GroupKill records memory.oom.group on the cgroup this report is attributed
 	// to. True means the kernel killed the whole cgroup rather than the single
 	// process it selected, which is what containerd configures and therefore
@@ -115,8 +122,34 @@ func TrajectoryFrom(samples []sampler.Sample) []TrajectoryPoint {
 // free of a dependency it would otherwise need only for one constant.
 const unlimited uint64 = 1<<64 - 1
 
+// VictimMatch records which identifier removed the victim from a process
+// listing.
+//
+// It is reported because the two matchers describe different environments, and
+// because the difference is invisible in the listing itself. A host-PID match
+// says the daemon and the kernel number processes the same way, which is a
+// bare-metal node with hostPID. An NSPid match says they do not, which is what a
+// nested runtime such as kind produces. Losing the fallback silently regressed
+// this once already, and nothing in the output changed shape when it did.
+type VictimMatch string
+
+// Victim match bases.
+const (
+	// VictimMatchNone means the victim was not found in the listing. Expected
+	// when no victim was identified at all, and a fault otherwise: the listing
+	// then still names a process the kernel has killed.
+	VictimMatchNone VictimMatch = "none"
+	// VictimMatchHostPID means the host-namespace PID matched. It cannot match
+	// by coincidence, so it is preferred.
+	VictimMatchHostPID VictimMatch = "hostPid"
+	// VictimMatchNSPid means only the container-namespace PID matched, so the
+	// daemon is reading a different PID namespace from the one the kernel
+	// reported the kill in.
+	VictimMatchNSPid VictimMatch = "nsPid"
+)
+
 // ProcessesFrom converts a container's process list into report entries,
-// dropping the victim.
+// dropping the victim, and reports which identifier found it.
 //
 // Removing the victim is not a plain PID comparison. The eBPF probe reports the
 // kernel's global PID, while the listing comes from whichever /proc the daemon
@@ -129,12 +162,19 @@ const unlimited uint64 = 1<<64 - 1
 // NSPid closes the gap. The listing is already scoped to a single cgroup, so a
 // container-namespace PID identifies a process within it, and it reads the same
 // on both sides however many namespaces sit between the daemon and the kernel.
-func ProcessesFrom(procs []procfs.Process, victim detector.Victim) []ProcessSnapshot {
+func ProcessesFrom(procs []procfs.Process, victim detector.Victim) ([]ProcessSnapshot, VictimMatch) {
 	snapshot := make([]ProcessSnapshot, 0, len(procs))
 	nsMatch := victimNSPidIsUnambiguous(procs, victim.NSPid)
+	match := VictimMatchNone
 	for _, proc := range procs {
-		if isVictim(proc, victim, nsMatch) {
-			continue
+		if found := victimMatch(proc, victim, nsMatch); found != VictimMatchNone {
+			// Only the first match drops a process. The host PID is unique in a
+			// listing, and an ambiguous NSPid has already disabled the fallback,
+			// so a second match would mean deleting a process that is running.
+			if match == VictimMatchNone {
+				match = found
+				continue
+			}
 		}
 		snapshot = append(snapshot, ProcessSnapshot{
 			PID:      proc.PID,
@@ -144,17 +184,21 @@ func ProcessesFrom(procs []procfs.Process, victim detector.Victim) []ProcessSnap
 			RSSBytes: proc.RSSBytes,
 		})
 	}
-	return snapshot
+	return snapshot, match
 }
 
-// isVictim reports whether a listed process is the one the kernel killed.
-func isVictim(proc procfs.Process, victim detector.Victim, nsMatch bool) bool {
+// victimMatch reports which identifier, if any, marks a listed process as the
+// one the kernel killed.
+func victimMatch(proc procfs.Process, victim detector.Victim, nsMatch bool) VictimMatch {
 	// The host PID is authoritative when both sides express it in the same
 	// namespace. A match here cannot be a coincidence.
 	if victim.PID != 0 && proc.PID == victim.PID {
-		return true
+		return VictimMatchHostPID
 	}
-	return nsMatch && victim.NSPid != 0 && proc.NSPid == victim.NSPid
+	if nsMatch && victim.NSPid != 0 && proc.NSPid == victim.NSPid {
+		return VictimMatchNSPid
+	}
+	return VictimMatchNone
 }
 
 // victimNSPidIsUnambiguous reports whether exactly one listed process carries

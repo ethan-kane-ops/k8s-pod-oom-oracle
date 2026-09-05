@@ -357,6 +357,84 @@ func TestHandleFiltersVictimAcrossPIDNamespaces(t *testing.T) {
 	if report.Processes[0].Comm != "server" {
 		t.Errorf("Processes[0] = %q, want server", report.Processes[0].Comm)
 	}
+	// The listing alone cannot distinguish a working fallback from a dead one:
+	// the victim is absent either way whenever host PIDs happen to agree. The
+	// recorded basis is what makes the regression visible.
+	if report.VictimMatch != oom.VictimMatchNSPid {
+		t.Errorf("VictimMatch = %q, want %q: host pids cannot agree here, so only "+
+			"the NSPid fallback can have removed the victim",
+			report.VictimMatch, oom.VictimMatchNSPid)
+	}
+}
+
+// TestHandleRecordsVictimMatch pins the basis for each way the victim can be
+// reconciled against the listing, including the way that means it was not.
+func TestHandleRecordsVictimMatch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		victim       detector.Victim
+		want         oom.VictimMatch
+		wantWarnings int
+	}{
+		{
+			// A bare-metal node with hostPID: both sides number processes the
+			// same way, and a match cannot be coincidence.
+			name:   "a host pid match is recorded as such",
+			victim: detector.Victim{PID: 28117, NSPid: 17, Known: true},
+			want:   oom.VictimMatchHostPID,
+		},
+		{
+			// A nested runtime. The kernel's global pid appears nowhere in the
+			// /proc the daemon can read.
+			name:   "an nspid match is recorded as the fallback",
+			victim: detector.Victim{PID: 1397320, NSPid: 17, Known: true},
+			want:   oom.VictimMatchNSPid,
+		},
+		{
+			// Neither identifier found it, so the listing still names a dead
+			// process. Nothing else in the report says so.
+			name:         "a known victim that matches nothing warns",
+			victim:       detector.Victim{PID: 1397320, NSPid: 999, Known: true},
+			want:         oom.VictimMatchNone,
+			wantWarnings: 1,
+		},
+		{
+			// No victim was identified at all, so there is nothing to filter and
+			// nothing is wrong. Warning here would cry wolf on every poller
+			// report for a container that was never sampled.
+			name:   "an unknown victim matches nothing and stays quiet",
+			victim: detector.Victim{},
+			want:   oom.VictimMatchNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, testLookup())
+			handler := &recordingHandler{}
+			h.daemon.log = slog.New(handler)
+
+			h.setMemory(500<<20, 512<<20, 512<<20)
+			h.addProcess(28102, "server", 400<<10)
+			h.addProcess(28117, "gc", 1<<10)
+			h.collect(t)
+
+			event := killEvent()
+			event.Victim = tt.victim
+			h.daemon.Handle(context.Background(), event)
+
+			if got := h.latest(t).VictimMatch; got != tt.want {
+				t.Errorf("VictimMatch = %q, want %q", got, tt.want)
+			}
+			if got := handler.warnings(); len(got) != tt.wantWarnings {
+				t.Errorf("warnings = %d %q, want %d", len(got), got, tt.wantWarnings)
+			}
+		})
+	}
 }
 
 // TestHandleRecordsGroupKill covers the flag that decides whether the process
