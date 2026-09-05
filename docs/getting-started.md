@@ -19,6 +19,26 @@ DaemonSet:
 just e2e-deploy
 ```
 
+## With Helm
+
+```bash
+helm install oom-oracle oci://ghcr.io/ethan-kane-ops/charts/oom-oracle \
+  --namespace oom-oracle --create-namespace
+
+kubectl label namespace oom-oracle \
+  pod-security.kubernetes.io/enforce=privileged \
+  pod-security.kubernetes.io/audit=privileged \
+  pod-security.kubernetes.io/warn=privileged
+```
+
+The label is required even though the agent is not `privileged: true`:
+`hostPID`, `hostPath` volumes and the two capabilities it adds are each outside
+the `baseline` level on their own. Without it admission rejects the pods and the
+DaemonSet reports no event explaining why.
+
+The chart's values are documented in
+[its README](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/blob/main/charts/oom-oracle/README.md).
+
 ## On any cluster
 
 ```bash

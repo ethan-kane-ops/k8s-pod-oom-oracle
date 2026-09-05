@@ -1,0 +1,65 @@
+name: Chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/**"
+      - "deploy/**"
+      - "hack/verify-chart-flags.sh"
+      - ".github/workflows/chart.yml"
+  pull_request:
+    paths:
+      - "charts/**"
+      - "deploy/**"
+      - "hack/verify-chart-flags.sh"
+      - ".github/workflows/chart.yml"
+
+concurrency:
+  group: chart-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ct lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # ct diffs against the base branch to decide which charts changed.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+
+      - name: ct lint
+        run: |
+          ct lint \
+            --charts charts/oom-oracle \
+            --check-version-increment=false \
+            --validate-maintainers=false
+
+  flags:
+    name: rendered flags exist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+        with:
+          just: "false"
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      # helm lint and helm template both pass on a chart that renders a flag the
+      # binary has never heard of, because neither knows what the arguments mean.
+      # The chart shipped --history-size once, against a binary whose flag is
+      # --history, and the only symptom would have been a DaemonSet that
+      # installs cleanly and crash-loops on every node.
+      - name: Verify every rendered flag exists on the daemon
+        run: ./hack/verify-chart-flags.sh

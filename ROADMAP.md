@@ -26,14 +26,15 @@ What works end to end, verified on a real kernel rather than fixtures:
 
 ## Next: reaching a first release
 
-1. **Helm chart**, published to Artifact Hub.
-2. **Cut the first tag.** The pipeline is in place; nothing has been released.
+1. **Cut the first tag.** The pipeline and the chart are in place; nothing has
+   been released, so there is nothing published to install.
+2. **List the chart on Artifact Hub**, which needs a public repository first.
 
 Shipped since this list was written: runnable
 [example workloads](./examples/), a
 [documentation site](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/), the
-`oom-oracle watch` terminal dashboard, and a release pipeline producing
-multi-arch images and CLI archives, cosign-signed with an SBOM.
+`oom-oracle watch` terminal dashboard, a release pipeline producing multi-arch
+images and CLI archives, cosign-signed with an SBOM, and a Helm chart.
 
 ## Known limitations, and what would fix them
 

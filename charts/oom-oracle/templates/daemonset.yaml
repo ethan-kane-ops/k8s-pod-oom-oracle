@@ -1,0 +1,143 @@
+{{/*
+The privileges below are not incidental, and none of them is a value.
+
+  CAP_BPF        creating maps and loading the verified program.
+  CAP_PERFMON    attaching the kprobe through perf_event_open. Without either,
+                 bpf() returns EPERM and the daemon falls back to polling.
+  runAsUser: 0   a non-zero UID starts with an empty *effective* capability set
+                 however large its bounding set is, and a pod spec cannot
+                 request the ambient capabilities that would populate it.
+  hostPID        /proc must show the node's processes, not the pod's.
+
+Making any of these configurable would produce a daemon that installs, runs,
+reports nothing, and explains nothing. The chart declines to offer that.
+*/}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "oom-oracle.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "oom-oracle.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "oom-oracle.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oom-oracle.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-agent
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "oom-oracle.serviceAccountName" . }}
+      hostPID: true
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: oom-oracle
+          {{- if .Values.image.digest }}
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          {{- else }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          {{- end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - daemon
+            - --detector={{ .Values.daemon.detector }}
+            - --kubernetes={{ .Values.daemon.kubernetes }}
+            - --poll-interval={{ .Values.daemon.pollInterval }}
+            - --sample-interval={{ .Values.daemon.sampleInterval }}
+            - --history={{ .Values.daemon.history }}
+            - --retain={{ .Values.daemon.retain }}
+            - --cgroup-prefix={{ .Values.daemon.cgroupPrefix }}
+            - --cgroup-root=/host/sys/fs/cgroup
+            - --proc-root=/host/proc
+            {{- if .Values.daemon.includeNonKubernetes }}
+            - --include-non-kubernetes
+            {{- end }}
+            - --listen={{ .Values.daemon.listen }}
+            - --log-level={{ .Values.daemon.logLevel }}
+            - --log-format={{ .Values.daemon.logFormat }}
+            {{- with .Values.daemon.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            # The pod informer is scoped to this node with a field selector.
+            # Without a node name the daemon would either watch every pod in the
+            # cluster or resolve nothing, so it refuses to guess and this is the
+            # only supported way to tell it.
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+            runAsGroup: 0
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - BPF
+                - PERFMON
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: cgroup
+              mountPath: /host/sys/fs/cgroup
+              readOnly: true
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: {{ .Values.hostPaths.cgroup }}
+            type: Directory
+        - name: proc
+          hostPath:
+            path: {{ .Values.hostPaths.proc }}
+            type: Directory

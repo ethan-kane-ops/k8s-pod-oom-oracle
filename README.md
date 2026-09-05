@@ -64,14 +64,22 @@ PROCESSES IN CONTAINER AFTER THE KILL:
 
 ## Quickstart
 
-> **Status.** No container image or Helm chart has been published yet. Until the
-> release pipeline lands, the supported path is to build the image and load it
-> into your cluster.
+> **Status.** No version has been tagged yet, so nothing is published to
+> `ghcr.io` and the Helm command below has nothing to pull. Until the first
+> release, build the image and load it into your cluster.
 
 ### On kind, end to end
 
 ```bash
 just e2e-deploy   # create the cluster, build the image, load it, roll out the DaemonSet
+```
+
+### With Helm
+
+```bash
+helm install oom-oracle oci://ghcr.io/ethan-kane-ops/charts/oom-oracle \
+  --namespace oom-oracle --create-namespace
+kubectl label namespace oom-oracle pod-security.kubernetes.io/enforce=privileged
 ```
 
 ### On any cluster
@@ -130,9 +138,9 @@ Working today: both detectors, cgroup v1 and v2 sampling, pod-name correlation,
 the HTTP API, the text and JSON renderers, the terminal dashboard, and an e2e
 suite that runs on kind in CI.
 
-The release pipeline is in place but no tag has been cut, so there is still no
-published image or archive to install. A Helm chart and Artifact Hub listing are
-the remaining gap.
+The release pipeline and the Helm chart are in place, but no tag has been cut,
+so there is nothing published to install yet. Cutting the first release is the
+remaining step.
 
 [ROADMAP.md](./ROADMAP.md) has the full picture, including the known limitations
 worth reading before you deploy this on anything you care about.

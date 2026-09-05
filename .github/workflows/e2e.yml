@@ -55,6 +55,17 @@ jobs:
       - name: Run the suite
         run: go test -tags e2e -v -count=1 -timeout 20m ./test/e2e/...
 
+      # The chart is linted on every PR that touches it, but linting cannot see
+      # that a rendered manifest produces a daemon which actually attaches. A
+      # lost capability starts cleanly and silently infers victims instead of
+      # tracing them, which no amount of YAML validation would catch.
+      - name: Install the Helm chart and confirm it traces
+        run: just chart-e2e
+
       - name: Daemon logs
         if: failure()
         run: just e2e-logs
+
+      - name: Remove the chart install
+        if: always()
+        run: just chart-e2e-down

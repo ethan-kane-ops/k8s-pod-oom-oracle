@@ -250,6 +250,58 @@ release-snapshot:
 release-check:
     goreleaser check
 
+[doc("Lint the Helm chart and check every flag it renders exists")]
+chart-lint:
+    helm lint charts/{{binary}}
+    ./hack/verify-chart-flags.sh
+
+# Render the chart to stdout, as `helm install` would apply it
+chart-template *args:
+    helm template {{binary}} charts/{{binary}} {{args}}
+
+[doc("Install the chart into the kind cluster and prove the probe attaches")]
+chart-e2e: e2e-deploy
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ctx="kind-{{e2e_cluster}}"
+    ns="{{e2e_ns}}-chart"
+    kubectl --context "$ctx" create namespace "$ns" --dry-run=client -o yaml \
+      | kubectl --context "$ctx" apply -f -
+    # hostPID, hostPath volumes and non-default capabilities are each outside
+    # `baseline`, so admission rejects the pods without this and the DaemonSet
+    # reports no event explaining why.
+    kubectl --context "$ctx" label namespace "$ns" \
+      pod-security.kubernetes.io/enforce=privileged \
+      pod-security.kubernetes.io/audit=privileged \
+      pod-security.kubernetes.io/warn=privileged --overwrite
+    helm --kube-context "$ctx" upgrade --install chart-test charts/{{binary}} -n "$ns" \
+      --set image.repository={{binary}} \
+      --set image.tag=e2e \
+      --set image.pullPolicy=Never \
+      --wait --timeout 3m
+    # The chart rendering is not the thing under test; a daemon that starts and
+    # attaches is. A wrong flag installs cleanly and crash-loops, and a lost
+    # capability starts fine and silently infers victims instead of tracing them.
+    #
+    # Queried through the API server's pod proxy rather than by exec: the image
+    # is distroless and has neither a shell nor wget.
+    pod=$(kubectl --context "$ctx" -n "$ns" get pod \
+      -l app.kubernetes.io/name={{binary}} -o jsonpath='{.items[0].metadata.name}')
+    detector=$(kubectl --context "$ctx" get --raw \
+      "/api/v1/namespaces/$ns/pods/$pod:9090/proxy/v1/status" \
+      | sed -n 's/.*"detector":"\([a-z]*\)".*/\1/p')
+    if [ "$detector" != "ebpf" ]; then
+      echo "✗ chart-installed daemon reports detector=$detector, want ebpf" >&2
+      kubectl --context "$ctx" -n "$ns" logs "$pod" --tail=30 >&2
+      exit 1
+    fi
+    echo "✓ chart-installed daemon is tracing (detector=$detector)"
+
+# Remove the chart install from the kind cluster
+chart-e2e-down:
+    -helm --kube-context kind-{{e2e_cluster}} uninstall chart-test -n {{e2e_ns}}-chart
+    -kubectl --context kind-{{e2e_cluster}} delete namespace {{e2e_ns}}-chart
+
 # Serve the docs site locally with live reload
 docs-serve:
     uv run --with-requirements docs/requirements.txt mkdocs serve

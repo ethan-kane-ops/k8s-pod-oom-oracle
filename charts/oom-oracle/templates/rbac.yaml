@@ -1,0 +1,38 @@
+{{- if .Values.rbac.create }}
+{{/*
+One rule, and the whole of the agent's cluster access. A kill arrives as a
+cgroup path carrying a pod UID; resolving it to a name means listing pods and
+watching for changes.
+
+The informer narrows this to one node with a spec.nodeName field selector, but
+RBAC cannot express that: field selectors are not authorization, so the grant is
+necessarily cluster-wide on pods. There is deliberately nothing else. The node
+name comes from the downward API rather than a nodes read, precisely so this
+list stays one line long.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "oom-oracle.fullname" . }}
+  labels:
+    {{- include "oom-oracle.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "oom-oracle.fullname" . }}
+  labels:
+    {{- include "oom-oracle.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "oom-oracle.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "oom-oracle.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

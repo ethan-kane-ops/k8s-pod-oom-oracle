@@ -1,0 +1,26 @@
+{{- if .Values.service.enabled }}
+{{/*
+Headless. Each node's agent holds only its own node's reports, so a
+load-balanced VIP would answer a query about one node's pod from a different
+node's daemon and report nothing found. Callers resolve individual pods instead.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "oom-oracle.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "oom-oracle.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "oom-oracle.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+{{- end }}

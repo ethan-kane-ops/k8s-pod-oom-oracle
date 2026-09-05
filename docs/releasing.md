@@ -14,6 +14,7 @@ which produces:
 | A checksum file, signed with cosign | GitHub Release |
 | An SPDX SBOM per archive | GitHub Release |
 | A multi-arch container image, signed and attested | `ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle` |
+| The Helm chart, signed and attested | `oci://ghcr.io/ethan-kane-ops/charts/oom-oracle` |
 
 Nothing is built on a laptop. `just release` writes the changelog, tags and
 pushes; the workflow does the rest.
@@ -50,6 +51,16 @@ and both fail if the section is empty.
 The alternative would be generating notes from commit subjects at release time.
 That was the original behaviour, and it published a release whose only mention of
 a renamed API field was `fix(oom): filter the victim across PID namespaces`.
+
+## The chart version is the tag
+
+`charts/oom-oracle/Chart.yaml` carries both `version` and `appVersion`, and the
+workflow refuses to publish when either disagrees with the tag. Bump them in the
+same commit that cuts the release. A chart whose version is not the version it
+installs is worse than no chart, because it looks authoritative.
+
+Artifact Hub is a separate, manual registration against the OCI repository, and
+it can only be done once the GitHub repository is public.
 
 ## Version metadata
 
