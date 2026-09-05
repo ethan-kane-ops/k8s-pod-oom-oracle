@@ -42,6 +42,33 @@ func ParseLimit(data []byte) (uint64, error) {
 	return normaliseLimit(value), nil
 }
 
+// ParsePIDList reads cgroup.procs, one PID per line.
+//
+// The file is written while processes are joining and leaving the cgroup, so a
+// torn read is normal rather than exceptional. A line that is not a number is
+// skipped instead of failing the read: returning nothing because one line was
+// mangled loses every process that was listed correctly, and this is the only
+// evidence of what was in the cgroup.
+func ParsePIDList(data []byte) ([]int, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var pids []int
+	for scanner.Scan() {
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" {
+			continue
+		}
+		pid, err := strconv.Atoi(text)
+		if err != nil || pid <= 0 {
+			continue
+		}
+		pids = append(pids, pid)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scanning pid list: %w", err)
+	}
+	return pids, nil
+}
+
 // ParseKeyValue reads the "key value" line format shared by memory.stat and
 // memory.events.
 //

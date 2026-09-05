@@ -67,3 +67,28 @@ func FuzzParsePSI(f *testing.F) {
 		_, _ = ParsePSI(data)
 	})
 }
+
+// FuzzParsePIDList guards the one parser that reads a file the kernel rewrites
+// while it is being read. A torn or interleaved cgroup.procs must never panic
+// and must never invent a PID: every entry returned is used to read /proc and
+// then to decide which process the kernel killed.
+func FuzzParsePIDList(f *testing.F) {
+	f.Add([]byte("28102\n28145\n"))
+	f.Add([]byte(""))
+	f.Add([]byte("\n\n\n"))
+	f.Add([]byte("0\n-1\n99999999999999999999\n"))
+	f.Add([]byte("28102\x0028145\n"))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		pids, err := ParsePIDList(data)
+		if err != nil {
+			return
+		}
+		for _, pid := range pids {
+			if pid <= 0 {
+				t.Errorf("ParsePIDList(%q) returned pid %d; a non-positive pid names "+
+					"no process and would be read from /proc as one", data, pid)
+			}
+		}
+	})
+}

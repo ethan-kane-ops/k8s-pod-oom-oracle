@@ -52,6 +52,23 @@ before SIGKILL is delivered, while the cgroup still exists.
 container survived a kill that nothing observed. Anything typed against this
 field needs a nullable boolean, not a boolean.
 
+### Changed
+
+- **The DaemonSet no longer requests `privileged: true`.** It asks for `CAP_BPF`
+  and `CAP_PERFMON` with `drop: [ALL]`, plus `allowPrivilegeEscalation: false`,
+  a read-only root filesystem and the `RuntimeDefault` seccomp profile. It still
+  runs as UID 0: a non-root UID cannot raise a capability into its effective set
+  without ambient capabilities, which a pod spec cannot request.
+
+  The namespace still needs the `privileged` Pod Security level. `hostPID`,
+  `hostPath` volumes and non-default capabilities are each outside `baseline`.
+
+- Cgroup membership is read from the kernel's `cgroup.procs` rather than by
+  matching `/proc/<pid>/cgroup`. The latter is written relative to the reading
+  process's cgroup namespace, and containerd puts an unprivileged pod in a
+  private one, so the daemon matched nothing and produced reports with an empty
+  process list. No error was logged, because none occurred.
+
 ### Added
 
 - `victimMatch` on the report: `hostPid`, `nsPid` or `none`, naming which

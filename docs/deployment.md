@@ -14,7 +14,8 @@ The `deploy/` directory contains four manifests, applied in order by
 
 | Grant | Why |
 |---|---|
-| `privileged: true` | Loading a BPF program and attaching a kprobe. Without it the daemon still runs, on the poller |
+| `CAP_BPF` | Creating the maps and loading the verified program |
+| `CAP_PERFMON` | Attaching the kprobe through `perf_event_open`. Loading succeeds without it; attaching is what fails |
 | `runAsUser: 0` | A non-root process starts with an empty effective capability set regardless of its bounding set, so `bpf()` returns `EPERM` and the daemon silently degrades |
 | `hostPID: true` | `/proc` must show the node's processes, or there is no victim to identify and no process list to build |
 | `/sys/fs/cgroup`, `/proc` | Read-only host mounts. The daemon never writes to the node |
@@ -23,11 +24,25 @@ The `deploy/` directory contains four manifests, applied in order by
 The daemon never writes to the node or to the API server.
 
 !!! warning "runAsUser: 0 is not redundant"
-    `privileged: true` alone is not enough. The distroless base image runs as a
+    Capabilities alone are not enough. The distroless base image runs as a
     non-root user, and a non-root process starts with an empty *effective*
-    capability set no matter how permissive its bounding set is. The result is
-    not an error: `bpf()` returns `EPERM` and the daemon quietly falls back to
-    polling. This was found by the e2e suite, not by a unit test.
+    capability set no matter how permissive its bounding set is. Populating it
+    for a non-root UID needs ambient capabilities, which a pod spec cannot
+    request. The result is not an error: `bpf()` returns `EPERM` and the daemon
+    quietly falls back to polling. This was found by the e2e suite, not by a
+    unit test.
+
+    The container therefore runs as UID 0 with `drop: [ALL]` and exactly two
+    capabilities added, rather than as a non-root user holding two capabilities
+    it could never use.
+
+!!! note "`privileged: true` is no longer requested"
+    It was, until the narrower set was measured on kind. Dropping it did break
+    the process listing at first, and the cause was not a capability: containerd
+    puts a privileged container in the host cgroup namespace and everything else
+    in a private one, and `/proc/<pid>/cgroup` is written relative to the
+    reader's. The daemon now reads cgroup membership from the kernel's
+    `cgroup.procs`, which reads the same from any namespace.
 
 ## Pod Security Admission
 
@@ -40,9 +55,11 @@ pod-security.kubernetes.io/audit: privileged
 pod-security.kubernetes.io/warn: privileged
 ```
 
-The agent is privileged by necessity. Pod Security must be told so, or admission
-rejects the DaemonSet outright on any cluster running the default `baseline` or
-`restricted` policy.
+This is still required after dropping `privileged: true`. Baseline forbids host
+namespaces, `hostPath` volumes, and adding any capability outside its default
+set, and the agent needs all three: `hostPID`, the two read-only host mounts, and
+`CAP_BPF` with `CAP_PERFMON`. Pod Security must be told so, or admission rejects
+the DaemonSet outright on any cluster running `baseline` or `restricted`.
 
 ## RBAC
 

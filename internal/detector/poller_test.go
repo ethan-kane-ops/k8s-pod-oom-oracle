@@ -24,6 +24,9 @@ const (
 type fixture struct {
 	cgroups fstest.MapFS
 	procs   fstest.MapFS
+	// members records which PIDs are in which cgroup, so cgroup.procs can be
+	// rewritten in full whenever one is added or removed.
+	members map[string][]int
 }
 
 func newFixture() *fixture {
@@ -36,11 +39,18 @@ func newFixture() *fixture {
 		procs: fstest.MapFS{
 			"meminfo": &fstest.MapFile{Data: []byte("MemTotal: 16777216 kB\n")},
 		},
+		members: map[string][]int{},
 	}
 }
 
 // setCgroup writes a container cgroup with the given cumulative kill count.
 func (f *fixture) setCgroup(path string, oomKills int) {
+	if _, ok := f.members[path]; !ok {
+		// The kernel creates cgroup.procs with the cgroup, empty. A fixture
+		// without it makes an empty cgroup indistinguishable from a deleted one.
+		f.members[path] = nil
+		f.writeProcs(path)
+	}
 	key := path[1:]
 	f.cgroups[key+"/memory.current"] = &fstest.MapFile{Data: []byte("1048576\n")}
 	f.cgroups[key+"/memory.max"] = &fstest.MapFile{Data: []byte("67108864\n")}
@@ -59,7 +69,14 @@ func (f *fixture) removeCgroup(path string) {
 }
 
 // setProcess writes a process into the proc tree, attached to a cgroup.
+//
+// The cgroup's own cgroup.procs is kept in step, because that is where the
+// poller reads membership from: /proc/<pid>/cgroup is namespace-relative and
+// unusable from an unprivileged pod.
 func (f *fixture) setProcess(pid int, comm, cgroupPath string, rssKB int) {
+	f.members[cgroupPath] = append(f.members[cgroupPath], pid)
+	f.writeProcs(cgroupPath)
+
 	dir := strconv.Itoa(pid)
 	f.procs[dir+"/status"] = &fstest.MapFile{
 		Data: fmt.Appendf(nil, "Name:\t%s\nState:\tS (sleeping)\nPid:\t%d\nPPid:\t1\nNSpid:\t%d\t1\nVmSize:\t 100000 kB\nVmRSS:\t %d kB\n",
@@ -70,12 +87,32 @@ func (f *fixture) setProcess(pid int, comm, cgroupPath string, rssKB int) {
 }
 
 func (f *fixture) removeProcess(pid int) {
+	for cgroupPath, pids := range f.members {
+		kept := pids[:0]
+		for _, member := range pids {
+			if member != pid {
+				kept = append(kept, member)
+			}
+		}
+		f.members[cgroupPath] = kept
+		f.writeProcs(cgroupPath)
+	}
+
 	dir := strconv.Itoa(pid)
 	for name := range f.procs {
 		if strings.HasPrefix(name, dir+"/") {
 			delete(f.procs, name)
 		}
 	}
+}
+
+// writeProcs rewrites a cgroup's membership file from the fixture's record.
+func (f *fixture) writeProcs(cgroupPath string) {
+	var list []byte
+	for _, pid := range f.members[cgroupPath] {
+		list = fmt.Appendf(list, "%d\n", pid)
+	}
+	f.cgroups[cgroupPath[1:]+"/cgroup.procs"] = &fstest.MapFile{Data: list}
 }
 
 // newPoller wires a Poller over the fixture with a deterministic clock.
