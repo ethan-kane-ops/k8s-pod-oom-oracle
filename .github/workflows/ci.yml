@@ -68,15 +68,18 @@ jobs:
       # The e2e tag rides along with the linux pass. test/e2e has no
       # platform-specific files, so linting it once is enough, but linting it
       # zero times is what happened before.
+      # Keep this version in step with .mise.toml. When they diverge the local
+      # `just check` gate and this job run different linters, and each passes
+      # while the other fails.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          version: v2.13.2
           args: --build-tags e2e
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         env:
           GOOS: darwin
         with:
-          version: v2.12.2
+          version: v2.13.2
 
   test:
     name: test

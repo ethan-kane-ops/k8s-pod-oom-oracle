@@ -1,4 +1,7 @@
 [tools]
 go = "1.26.6"
-golangci-lint = "latest"
+# Pinned, and pinned to the same version as .github/workflows/ci.yml. With
+# "latest" here the local gate and CI run different linters, so each can pass
+# while the other fails. Bump both together or not at all.
+golangci-lint = "2.13.2"
 just = "latest"
