@@ -1,6 +1,7 @@
 # Kubernetes Pod OOM Oracle 🔮
 
 [![CI](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-mkdocs--material-0a9edc.svg)](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ethan-kane-ops/k8s-pod-oom-oracle)](https://goreportcard.com/report/github.com/ethan-kane-ops/k8s-pod-oom-oracle)
 [![eBPF Powered](https://img.shields.io/badge/eBPF-Kernel--level-red.svg)](https://ebpf.io)

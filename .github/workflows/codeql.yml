@@ -7,6 +7,11 @@ on:
     branches: [main]
   schedule:
     - cron: "30 4 * * 1"
+  # On demand, because otherwise the first run of this workflow is a push to
+  # main. It was skipped on every invocation while the repository was private,
+  # so it had never actually executed, and its debut would have been the
+  # release commit.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,11 +21,15 @@ jobs:
     name: analyze
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # CodeQL needs GitHub Advanced Security on a private repository, so while
-    # this one is private the job would fail every run. Skipping keeps the
-    # workflow correct and dormant; it starts working on its own the moment
-    # ENG-127 flips visibility, with no edit needed. A missing visibility field
-    # evaluates false, which is the safe direction.
+    # CodeQL needs GitHub Advanced Security on a private repository, where this
+    # job would fail every run. The guard kept it dormant until the repository
+    # went public, and still holds if it ever goes private again. A missing
+    # visibility field evaluates false, which is the safe direction.
+    #
+    # This is the advanced setup. GitHub's *default* CodeQL setup must stay off:
+    # with it enabled the SARIF upload below is rejected and this workflow fails.
+    # Public repositories can have it switched on for them, so if code scanning
+    # starts failing, check Settings, Code security, Code scanning first.
     if: github.event.repository.visibility == 'public'
     permissions:
       actions: read

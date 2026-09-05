@@ -53,14 +53,15 @@ jobs:
     name: deploy to Pages
     runs-on: ubuntu-latest
     needs: [build]
-    # PAGES_ENABLED gates the deploy because Pages is not configured on this
-    # repository yet, and a deploy against an unconfigured Pages site fails the
-    # job and reddens main. The repository is also still private, and a Pages
-    # site would be publicly readable, so enabling it is part of the public
-    # launch rather than something the docs build decides on its own.
+    # PAGES_ENABLED gates the deploy so that a fork, or this repository before
+    # Pages was configured, builds the site and stops rather than failing the
+    # job against a Pages site that does not exist.
     #
-    # To turn it on: enable Pages with source "GitHub Actions", then set the
-    # repository variable PAGES_ENABLED to true.
+    # To turn it on: enable Pages with source "GitHub Actions" (not a branch;
+    # the deploy below publishes an artifact, and a branch source ignores it),
+    # then set the repository variable PAGES_ENABLED to true. It is a variable
+    # under Settings, Secrets and variables, Actions, not a secret and not an
+    # environment variable: `gh variable set PAGES_ENABLED --body true`.
     if: github.ref == 'refs/heads/main' && vars.PAGES_ENABLED == 'true'
     permissions:
       pages: write
