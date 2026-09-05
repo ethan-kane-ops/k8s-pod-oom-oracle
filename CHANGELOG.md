@@ -76,6 +76,13 @@ field needs a nullable boolean, not a boolean.
   `inspect` prints, and the header states which detector is active because an
   inferred victim and a traced one differ in one boolean and nothing else. It
   reads the HTTP API and needs no privileges of its own.
+- **A release pipeline.** A `v*` tag builds CLI archives for linux, darwin and
+  windows on amd64 and arm64, plus a multi-arch container image. Everything is
+  signed with cosign in keyless mode and carries an SBOM, and the image is
+  attested through GitHub. Verification commands are in `SECURITY.md`.
+
+  Release notes are extracted from this file rather than generated from commit
+  subjects, and the release fails if the section for the tag is empty.
 - `victimMatch` on the report: `hostPid`, `nsPid` or `none`, naming which
   identifier removed the victim from `processes`. A `none` alongside a known
   victim means the listing may still name the process the kernel killed. It also

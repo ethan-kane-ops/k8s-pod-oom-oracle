@@ -79,6 +79,7 @@ e2e_workload_image := "oom-oracle-workload:e2e"
 # inside the kind node fails to start its CRI plugin with "too many open files",
 # the kubelet then cannot talk to a runtime, and the cluster dies during
 # kubeadm init with an error that names none of this.
+[doc("Create the kind cluster used by the e2e suite")]
 e2e-up:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -105,6 +106,7 @@ e2e-up:
 # fetched, and `kind load` asks ctr to import --all-platforms. A local build has
 # one platform and every blob. Retagging does not help: the index travels with
 # the name.
+[doc("Build the image, load it into kind, and roll out the daemon")]
 e2e-deploy: e2e-up
     echo "FROM {{e2e_base_image}}" | docker build -q -t {{e2e_workload_image}} -
     kind load docker-image {{e2e_workload_image}} --name {{e2e_cluster}}
@@ -192,7 +194,7 @@ release-preview bump="auto":
     @echo "── changelog preview ──"
     @git cliff --bump {{bump}} --unreleased
 
-# Cut a release: bump (auto/patch/minor/major) or explicit vX.Y.Z. Generates CHANGELOG.md, tags, pushes, gh release.
+# Cut a release: bump (auto/patch/minor/major) or explicit vX.Y.Z. Writes CHANGELOG.md, tags and pushes; the Release workflow publishes.
 release bump="auto":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -223,11 +225,30 @@ release bump="auto":
     git cliff --tag "$new_ver" --unreleased --prepend CHANGELOG.md
     git add CHANGELOG.md
     git diff --cached --quiet || git commit -m "chore(release): $new_ver"
+    # Prove the notes exist before the tag goes out. The Release workflow runs
+    # this same script and fails on an empty section, and a tag is far harder to
+    # take back than a failed command here.
+    ./hack/release-notes.sh "$new_ver" >/dev/null
     git tag -a "$new_ver" -m "Release $new_ver"
     git push
     git push origin "refs/tags/$new_ver"
-    notes=$(git cliff --tag "$new_ver" --latest --strip header)
-    gh release create "$new_ver" --title "$new_ver" --notes "$notes" --verify-tag
+    echo "▶ pushed $new_ver — .github/workflows/release.yml now builds and publishes it"
+    echo "  gh run watch \$(gh run list --workflow=Release --limit=1 --json databaseId -q '.[0].databaseId')"
+
+# Build every release artifact locally without publishing anything
+#
+# Runs the real goreleaser pipeline against a snapshot version, so a config
+# mistake surfaces here rather than on a tag that cannot be taken back. Signing
+# and SBOMs are skipped: both need credentials or tools that only CI has.
+[doc("Build every release artifact locally without publishing")]
+release-snapshot:
+    goreleaser release --snapshot --clean --skip=sign,sbom,publish
+    @echo "── artifacts ──"
+    @ls -1 dist/*.tar.gz dist/*.zip dist/checksums.txt 2>/dev/null || true
+
+# Check the goreleaser config without building
+release-check:
+    goreleaser check
 
 # Serve the docs site locally with live reload
 docs-serve:

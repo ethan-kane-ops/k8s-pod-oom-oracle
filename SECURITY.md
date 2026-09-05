@@ -74,18 +74,62 @@ the API server proxy or a NetworkPolicy-restricted path.
 
 ## Supported Versions
 
-This project has not yet cut a release. Until it does, only `main` is supported,
-and security fixes land there.
-
-Once releases begin, the latest minor line will receive security updates and
-this table will be filled in.
+Until the first tag is cut, only `main` is supported and security fixes land
+there. From the first release, the latest minor line receives security updates.
 
 ## Signed Releases
 
-Not yet. Release signing (cosign keyless, bound to this repository's release
-workflow) is planned alongside the first tagged release. This section will
-document the exact `cosign verify` command when the signing pipeline lands.
+Everything a tag publishes is signed with [cosign](https://docs.sigstore.dev) in
+keyless mode. There is no public key to fetch and no private key held anywhere:
+the signing certificate is issued to the release workflow's OIDC identity and
+expires in minutes, so verification asks who signed it rather than which key.
 
-Until then, build from source. `go build` needs only Go: the eBPF objects are
-committed, so no toolchain beyond the Go compiler is involved in producing the
-binary you run.
+Substitute the tag you downloaded for `v0.1.0` throughout.
+
+### The container image
+
+```bash
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/ethan-kane-ops/k8s-pod-oom-oracle/\.github/workflows/release\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:v0.1.0
+```
+
+Both flags are required. Without them cosign accepts a signature from any
+identity Sigstore will issue a certificate to, which is anyone at all.
+
+Build provenance is attested through GitHub and can be checked with the `gh`
+CLI, which names the workflow and commit the image was built from:
+
+```bash
+gh attestation verify oci://ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:v0.1.0 \
+  --repo ethan-kane-ops/k8s-pod-oom-oracle
+```
+
+### The CLI archives
+
+The checksum file is signed, and the archives are covered by it:
+
+```bash
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp '^https://github\.com/ethan-kane-ops/k8s-pod-oom-oracle/\.github/workflows/release\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+
+sha256sum --check --ignore-missing checksums.txt
+```
+
+Verify the checksum file first. Checking an archive against an unverified
+checksum file proves only that the two came from the same place.
+
+### SBOMs
+
+Every archive ships an SPDX document beside it, and the image carries one in its
+manifest, readable with `cosign download sbom` or `syft`.
+
+### Or build from source
+
+`go build` needs only Go. The eBPF objects are committed, so no toolchain beyond
+the Go compiler is involved in producing the binary you run.

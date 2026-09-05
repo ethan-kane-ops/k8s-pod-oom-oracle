@@ -94,9 +94,20 @@ line cannot corrupt a terminal.
 
 ## Supply chain
 
-No release has been tagged and no artifacts are published, so there is nothing to
-verify yet. Signed multi-arch images with an SBOM are on the roadmap, and
-`SECURITY.md` does not promise verifiable artifacts until that lands.
+Every tag publishes a multi-arch image and CLI archives, all signed with cosign
+in keyless mode and carrying an SBOM. There is no public key: the certificate is
+issued to the release workflow's own identity and expires in minutes, so
+verification asks *who* signed rather than *which key* signed.
+
+The exact commands are in
+[SECURITY.md](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/blob/main/SECURITY.md#signed-releases).
+Both the identity and the issuer flags are required: without them cosign accepts
+a signature from anyone Sigstore will issue a certificate to.
+
+Images are signed by digest rather than by tag. A tag can be moved to point at
+different content; a digest cannot.
+
+What a tag publishes, and how one is cut, is in [Releasing](releasing.md).
 
 The eBPF objects in `internal/detector/bpf` are committed to the repository and
 built in a pinned container. CI's `bpf-verify` job fails if the committed objects
