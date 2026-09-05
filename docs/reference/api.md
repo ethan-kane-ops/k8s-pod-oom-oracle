@@ -132,6 +132,7 @@ interpret those as markup.
     }
   ],
   "groupKill": true,
+  "victimMatch": "nsPid",
   "trend": {
     "bytesPerSecond": 1048576,
     "rSquared": 0.97,
@@ -158,6 +159,7 @@ interpret those as markup.
 | `trajectory` | array | Memory history leading up to the kill, oldest first |
 | `processes` | array | The container's process list at report time, heaviest first, victim removed |
 | `groupKill` | bool or null | Whether the cgroup is killed as an indivisible unit. `null` when it could not be read |
+| `victimMatch` | string | Which identifier removed the victim from `processes`: `hostPid`, `nsPid` or `none` |
 | `trend` | object | Growth analysis over the trajectory |
 
 ### `identity`
@@ -248,6 +250,26 @@ to `oom_kill_process`, before SIGKILL is delivered, so it reads the cgroup while
 it still exists. The poller learns of a kill from a counter on its next pass and
 is more often left with `null`, which is the same difference in confidence that
 `victim.inferred` records.
+
+### `victimMatch`
+
+Which identifier removed the victim from `processes`.
+
+| Value | Meaning |
+|---|---|
+| `hostPid` | The host-namespace PID matched. The daemon and the kernel number processes the same way |
+| `nsPid` | Only the container-namespace PID matched. They do not, which is normal under a nested runtime such as kind |
+| `none` | Neither matched |
+
+`none` is expected when `victim.known` is false: there was no victim to remove.
+With a known victim it is a fault, and it means `processes` may still name the
+process the kernel killed. The terminal renderer says so; nothing else in the
+output would give it away, because the entry carries a plausible PID and a
+plausible size.
+
+`nsPid` is worth reading when the numbers in a report look unrelated to each
+other. It says `victim.pid` is a global PID from the kernel while the PIDs in
+`processes` come from a different namespace, so the two are not comparable.
 
 ### `trend`
 

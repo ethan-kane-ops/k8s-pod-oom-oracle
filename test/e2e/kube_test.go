@@ -153,6 +153,11 @@ type report struct {
 	// Tri-state, so a nil here is "the daemon could not read memory.oom.group",
 	// which is a different claim from "the cgroup does not group-kill".
 	GroupKill *bool `json:"groupKill"`
+	// VictimMatch names which identifier removed the victim from Processes:
+	// "hostPid", "nsPid" or "none". Without it the suite can see that the
+	// victim is absent but not which matcher achieved it, so the NSPid fallback
+	// could be deleted without turning anything red.
+	VictimMatch string `json:"victimMatch"`
 }
 
 func daemonStatus(t *testing.T, pod string) status {

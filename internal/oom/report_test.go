@@ -101,51 +101,58 @@ func TestProcessesFrom(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		procs    []procfs.Process
-		victim   detector.Victim
-		wantPIDs []int
+		name      string
+		procs     []procfs.Process
+		victim    detector.Victim
+		wantPIDs  []int
+		wantMatch VictimMatch
 	}{
 		{
-			name:     "no processes yields no entries",
-			procs:    nil,
-			victim:   detector.Victim{PID: 200, NSPid: 17},
-			wantPIDs: []int{},
+			name:      "no processes yields no entries",
+			procs:     nil,
+			victim:    detector.Victim{PID: 200, NSPid: 17},
+			wantPIDs:  []int{},
+			wantMatch: VictimMatchNone,
 		},
 		{
 			// A victim still visible in /proc while it dies must not be listed
 			// alongside the processes that are genuinely there.
-			name:     "the victim is excluded on a matching host pid",
-			procs:    procs,
-			victim:   detector.Victim{PID: 200, NSPid: 17},
-			wantPIDs: []int{100, 300},
+			name:      "the victim is excluded on a matching host pid",
+			procs:     procs,
+			victim:    detector.Victim{PID: 200, NSPid: 17},
+			wantPIDs:  []int{100, 300},
+			wantMatch: VictimMatchHostPID,
 		},
 		{
 			// The defect this function exists to fix. Under a nested runtime the
 			// probe reports the kernel's global pid, which is nowhere in the
 			// daemon's /proc, so only NSPid can identify the victim.
-			name:     "the victim is excluded on nspid when host pids disagree",
-			procs:    procs,
-			victim:   detector.Victim{PID: 1397320, NSPid: 17},
-			wantPIDs: []int{100, 300},
+			name:      "the victim is excluded on nspid when host pids disagree",
+			procs:     procs,
+			victim:    detector.Victim{PID: 1397320, NSPid: 17},
+			wantPIDs:  []int{100, 300},
+			wantMatch: VictimMatchNSPid,
 		},
 		{
-			name:     "a host pid match wins even with a mismatched nspid",
-			procs:    procs,
-			victim:   detector.Victim{PID: 200, NSPid: 999},
-			wantPIDs: []int{100, 300},
+			name:      "a host pid match wins even with a mismatched nspid",
+			procs:     procs,
+			victim:    detector.Victim{PID: 200, NSPid: 999},
+			wantPIDs:  []int{100, 300},
+			wantMatch: VictimMatchHostPID,
 		},
 		{
-			name:     "an absent victim removes nothing",
-			procs:    procs,
-			victim:   detector.Victim{PID: 999, NSPid: 998},
-			wantPIDs: []int{100, 200, 300},
+			name:      "an absent victim removes nothing",
+			procs:     procs,
+			victim:    detector.Victim{PID: 999, NSPid: 998},
+			wantPIDs:  []int{100, 200, 300},
+			wantMatch: VictimMatchNone,
 		},
 		{
-			name:     "an unknown victim removes nothing",
-			procs:    procs,
-			victim:   detector.Victim{},
-			wantPIDs: []int{100, 200, 300},
+			name:      "an unknown victim removes nothing",
+			procs:     procs,
+			victim:    detector.Victim{},
+			wantPIDs:  []int{100, 200, 300},
+			wantMatch: VictimMatchNone,
 		},
 		{
 			// Deleting a process that is genuinely running is a worse report
@@ -156,21 +163,29 @@ func TestProcessesFrom(t *testing.T) {
 				{PID: 100, NSPid: 1, Comm: "outer"},
 				{PID: 200, NSPid: 1, Comm: "inner"},
 			},
-			victim:   detector.Victim{PID: 1397320, NSPid: 1},
-			wantPIDs: []int{100, 200},
+			victim:    detector.Victim{PID: 1397320, NSPid: 1},
+			wantPIDs:  []int{100, 200},
+			wantMatch: VictimMatchNone,
 		},
 		{
-			name:     "a zero nspid on both sides is not a match",
-			procs:    []procfs.Process{{PID: 100, NSPid: 0, Comm: "server"}},
-			victim:   detector.Victim{PID: 1397320, NSPid: 0},
-			wantPIDs: []int{100},
+			name:      "a zero nspid on both sides is not a match",
+			procs:     []procfs.Process{{PID: 100, NSPid: 0, Comm: "server"}},
+			victim:    detector.Victim{PID: 1397320, NSPid: 0},
+			wantPIDs:  []int{100},
+			wantMatch: VictimMatchNone,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ProcessesFrom(tc.procs, tc.victim)
+			got, match := ProcessesFrom(tc.procs, tc.victim)
 
+			// The basis is the whole point of reporting it: "the victim is
+			// gone from the listing" is true whichever matcher fired, so it
+			// cannot tell a working fallback from a dead one.
+			if match != tc.wantMatch {
+				t.Errorf("match basis = %q, want %q", match, tc.wantMatch)
+			}
 			if got == nil {
 				t.Fatal("ProcessesFrom returned nil; callers marshal this directly and want [] not null")
 			}
@@ -192,7 +207,7 @@ func TestProcessesFromCopiesEveryField(t *testing.T) {
 		Cmdline: []string{"node", "server.js"}, RSSBytes: 390,
 	}
 
-	got := ProcessesFrom([]procfs.Process{proc}, detector.Victim{})
+	got, _ := ProcessesFrom([]procfs.Process{proc}, detector.Victim{})
 	if len(got) != 1 {
 		t.Fatalf("got %d processes, want 1", len(got))
 	}

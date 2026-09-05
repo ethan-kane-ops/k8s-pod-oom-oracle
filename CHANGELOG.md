@@ -54,6 +54,11 @@ field needs a nullable boolean, not a boolean.
 
 ### Added
 
+- `victimMatch` on the report: `hostPid`, `nsPid` or `none`, naming which
+  identifier removed the victim from `processes`. A `none` alongside a known
+  victim means the listing may still name the process the kernel killed. It also
+  says whether the daemon and the kernel share a PID namespace, which is what
+  decides whether `victim.pid` is comparable to the PIDs in `processes`.
 - `unattributed` on `GET /v1/status`, beside the existing `skipped`. Additive,
   but it is the counter to alert on: `skipped` climbs on any busy node because
   the probes see every kill on the machine, while `unattributed` counts kills

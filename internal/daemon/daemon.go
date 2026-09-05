@@ -219,11 +219,32 @@ func (d *Daemon) buildReport(event detector.KillEvent) (oom.Report, bool) {
 		if err != nil {
 			d.log.Debug("listing container processes", "cgroup", event.CgroupPath, "error", err)
 		} else {
-			report.Processes = oom.ProcessesFrom(procs, event.Victim)
+			report.Processes, report.VictimMatch = oom.ProcessesFrom(procs, event.Victim)
+			d.warnOnUnfilteredVictim(&report)
 		}
 	}
 
 	return report, true
+}
+
+// warnOnUnfilteredVictim reports a listing that still contains the dead process.
+//
+// A known victim that matched neither identifier means the report names a
+// process the kernel has already killed as though it were running. That is the
+// exact defect the NSPid fallback was added to fix, and it announced itself in
+// no other way: the listing simply had one entry too many, with a plausible PID
+// and a plausible size. Warning here is what stops the next regression being
+// found by reading a report months later.
+func (d *Daemon) warnOnUnfilteredVictim(report *oom.Report) {
+	if !report.Victim.Known || report.VictimMatch != oom.VictimMatchNone {
+		return
+	}
+	d.log.Warn("victim not found in the container process listing",
+		"cgroup", report.Identity.CgroupPath,
+		"hostPid", report.Victim.PID,
+		"nsPid", report.Victim.NSPid,
+		"listed", len(report.Processes),
+		"effect", "the listing names a process the kernel has killed")
 }
 
 // applyGroupKill records whether the cgroup is killed as an indivisible unit,

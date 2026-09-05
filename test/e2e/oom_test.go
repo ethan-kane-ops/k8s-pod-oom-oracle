@@ -114,6 +114,7 @@ func TestContainerOOMKilledOutright(t *testing.T) {
 	if found.Identity.QoS == "" {
 		t.Error("QoS is empty; the cgroup path was not parsed as a Kubernetes container")
 	}
+	assertVictimFiltered(t, found)
 	assertResolved(t, found, name, "hog")
 
 	t.Logf("report: source=%s pod=%s/%s/%s victim=%s pid=%d rss=%d peak=%d qos=%s",
@@ -216,13 +217,14 @@ func TestMultiProcessContainerNamesTheVictim(t *testing.T) {
 		}
 	}
 
+	assertVictimFiltered(t, found)
 	assertResolved(t, found, name, "app")
 
-	t.Logf("report: source=%s pod=%s/%s/%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t processes=%d groupKill=%s",
+	t.Logf("report: source=%s pod=%s/%s/%s victim=%s hostpid=%d nspid=%d rss=%d inferred=%t processes=%d groupKill=%s victimMatch=%s",
 		found.Source, found.Identity.Namespace, found.Identity.PodName,
 		found.Identity.ContainerName, found.Victim.Comm, found.Victim.PID,
 		found.Victim.NSPid, found.Victim.RSSBytes, found.Victim.Inferred,
-		len(found.Processes), tristate(found.GroupKill))
+		len(found.Processes), tristate(found.GroupKill), found.VictimMatch)
 
 	// The eBPF detector reads the victim out of the kernel, so it can state
 	// things the poller can only guess at. Only hold it to that standard.
@@ -386,6 +388,44 @@ func waitForReport(t *testing.T, daemon, podName string, before int, uid string)
 			uid, len(reports), before)
 	}, func() string { return podDiagnostics(t, podName) })
 	return found
+}
+
+// assertVictimFiltered checks that the victim was removed from the listing, and
+// that the suite can say which matcher did it.
+//
+// The second half is the part with teeth. "The victim is absent" is true
+// whichever identifier matched, so on a node where host PIDs happen to agree the
+// NSPid fallback could be deleted outright and every assertion here would still
+// pass. That is how the original defect survived: host PIDs silently agreed in
+// every environment anyone tested in, and disagreed only in the one that
+// mattered. Recording the basis turns a removed fallback into "none", which
+// fails here in any environment.
+func assertVictimFiltered(t *testing.T, found report) {
+	t.Helper()
+
+	if !found.Victim.Known {
+		// Nothing was identified, so there is nothing to have filtered.
+		return
+	}
+
+	switch found.VictimMatch {
+	case "hostPid", "nsPid":
+		t.Logf("victim filtered by %s", found.VictimMatch)
+	case "none":
+		t.Errorf("victimMatch = none: neither the host pid (%d) nor the container "+
+			"pid (%d) matched any of the %d listed processes, so the listing names "+
+			"a process the kernel killed",
+			found.Victim.PID, found.Victim.NSPid, len(found.Processes))
+	default:
+		t.Errorf("victimMatch = %q, want hostPid, nsPid or none", found.VictimMatch)
+	}
+
+	for _, proc := range found.Processes {
+		if proc.PID == found.Victim.PID || proc.NSPid == found.Victim.NSPid {
+			t.Errorf("the listing still contains the victim (pid %d, nspid %d) "+
+				"despite victimMatch=%s", proc.PID, proc.NSPid, found.VictimMatch)
+		}
+	}
 }
 
 // tristate renders a nullable bool for a log line, where %t would print a
