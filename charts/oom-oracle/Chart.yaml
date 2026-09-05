@@ -24,6 +24,13 @@ maintainers:
     url: https://github.com/ethan-kane-ops
 annotations:
   artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: monitoring-logging
+  # Listed so Artifact Hub can scan the image it actually installs. The tag
+  # tracks appVersion above, and the Release workflow refuses to publish when
+  # the two disagree with the git tag.
+  artifacthub.io/images: |
+    - name: oom-oracle
+      image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:0.1.0
   # The agent needs host namespaces and two capabilities. Artifact Hub surfaces
   # this on the listing, which is the right place for someone to find out before
   # installing rather than after admission rejects it.

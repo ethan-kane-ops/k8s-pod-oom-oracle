@@ -80,12 +80,21 @@ sboms:
 signs:
   - id: checksums
     cmd: cosign
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+    # A single Sigstore bundle, not a detached signature plus certificate.
+    #
+    # cosign v3 deprecated the flags that produced the two-file form, and
+    # --use-signing-config now defaults on and requires --bundle, so asking for
+    # the old output means fighting two deprecations at once. v0.1.0's release
+    # failed exactly here: "create bundle file: open : no such file or
+    # directory" is cosign writing a bundle to the path nobody passed it.
+    #
+    # The bundle carries the signature, the signing certificate and the
+    # transparency log entry together, so verification needs one file and one
+    # flag. See SECURITY.md for the verify command.
+    signature: "${artifact}.bundle"
     args:
       - sign-blob
-      - --output-signature=${signature}
-      - --output-certificate=${certificate}
+      - --bundle=${signature}
       - --yes
       - ${artifact}
     artifacts: checksum

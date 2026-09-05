@@ -33,7 +33,14 @@ jobs:
 
       # goreleaser shells out to syft to produce the SBOMs.
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      # cosign-release is pinned deliberately. Pinning the action by SHA says
+      # nothing about the binary it downloads, which defaults to the newest
+      # release: v0.1.0 was signed by a cosign that had changed sign-blob's
+      # flags since this config was written, and the release failed on the tag.
+      # Bump this by hand; dependabot only tracks the action ref above it.
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.1
+        with:
+          cosign-release: v3.1.3
 
       # Release notes come from CHANGELOG.md, not from commit subjects. The
       # breaking changes are written there by hand because no commit subject can
@@ -100,6 +107,8 @@ jobs:
           provenance: mode=max
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.1
+        with:
+          cosign-release: v3.1.3
 
       # Signed by digest, never by tag. A tag can be moved to point at a
       # different image; a digest cannot.
@@ -146,10 +155,15 @@ jobs:
         run: |
           chart_ver=$(awk '/^version:/ {print $2}' charts/oom-oracle/Chart.yaml | tr -d '"')
           app_ver=$(awk '/^appVersion:/ {print $2}' charts/oom-oracle/Chart.yaml | tr -d '"')
+          # The tag inside the artifacthub.io/images annotation. Artifact Hub
+          # scans whatever it names, so a stale one points the listing's
+          # vulnerability report at an image the chart does not install.
+          img_ver=$(awk -F: '/image: ghcr.io\/.*k8s-pod-oom-oracle:/ {print $3}' charts/oom-oracle/Chart.yaml | tr -d ' "')
           want="${{ steps.ver.outputs.version }}"
           fail=0
           [ "$chart_ver" = "$want" ] || { echo "chart version ($chart_ver) != tag ($want)" >&2; fail=1; }
           [ "$app_ver" = "$want" ] || { echo "appVersion ($app_ver) != tag ($want)" >&2; fail=1; }
+          [ "$img_ver" = "$want" ] || { echo "artifacthub.io/images tag ($img_ver) != tag ($want)" >&2; fail=1; }
           exit $fail
 
       - name: Helm registry login
@@ -177,6 +191,8 @@ jobs:
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.1
+        with:
+          cosign-release: v3.1.3
 
       - name: Sign chart (keyless)
         env:

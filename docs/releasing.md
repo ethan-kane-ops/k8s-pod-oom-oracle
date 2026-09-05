@@ -11,13 +11,22 @@ which produces:
 | Artifact | Where |
 |---|---|
 | CLI archives for linux, darwin and windows on amd64 and arm64 | GitHub Release |
-| A checksum file, signed with cosign | GitHub Release |
+| A checksum file, plus a cosign bundle signing it | GitHub Release |
 | An SPDX SBOM per archive | GitHub Release |
 | A multi-arch container image, signed and attested | `ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle` |
 | The Helm chart, signed and attested | `oci://ghcr.io/ethan-kane-ops/charts/oom-oracle` |
 
 Nothing is built on a laptop. `just release` writes the changelog, tags and
 pushes; the workflow does the rest.
+
+!!! warning "cosign is version-pinned, and bumping it is manual"
+    `release.yml` pins `cosign-release` on all three installer steps. Pinning
+    the action by SHA says nothing about the binary it downloads, which
+    otherwise tracks the newest release. v0.1.0 failed on exactly that: cosign
+    v3 had changed `sign-blob`'s flags, the signing step errored, and the tag
+    published an image and a chart with no archives. Dependabot updates the
+    action ref but not the version below it, so bump it by hand and let a
+    release-candidate tag prove it.
 
 !!! note "The daemon is Linux-only"
     Darwin and windows archives exist because `inspect` and `watch` are HTTP
@@ -67,13 +76,48 @@ a renamed API field was `fix(oom): filter the victim across PID namespaces`.
 
 ## The chart version is the tag
 
-`charts/oom-oracle/Chart.yaml` carries both `version` and `appVersion`, and the
-workflow refuses to publish when either disagrees with the tag. Bump them in the
-same commit that cuts the release. A chart whose version is not the version it
-installs is worse than no chart, because it looks authoritative.
+`charts/oom-oracle/Chart.yaml` states the version three times: `version`,
+`appVersion`, and the image tag inside the `artifacthub.io/images` annotation.
+The workflow refuses to publish when any of them disagrees with the tag, and it
+checks *after* the image job has pushed, so a missed bump leaves a
+half-published release.
 
-Artifact Hub is a separate, manual registration against the OCI repository, and
-it can only be done once the GitHub repository is public.
+`just release` sets all three through `hack/chart-version.sh`, so there is
+nothing to remember. A chart whose version is not the version it installs is
+worse than no chart, because it looks authoritative.
+
+## Artifact Hub
+
+Registration is manual, one-off, and needs a public repository with a published
+chart. Both are now true.
+
+1. Add the repository at [artifact hub](https://artifacthub.io/control-panel/repositories):
+
+   | Field | Value |
+   |---|---|
+   | Kind | Helm charts |
+   | Name | `oom-oracle` |
+   | Display name | `oom-oracle` |
+   | URL | `oci://ghcr.io/ethan-kane-ops/charts/oom-oracle` |
+
+   The name becomes the URL segment, so the listing lands at
+   `artifacthub.io/packages/helm/oom-oracle/oom-oracle`. An OCI repository holds
+   one chart, so naming it after the chart rather than the owner keeps a second
+   chart from having to squat on the name.
+
+2. Copy the repository ID it issues into `artifacthub-repo.yml` at the
+   repository root.
+3. `just chart-claim`.
+
+Step 3 pushes that file to the chart's OCI repository under the `artifacthub.io`
+tag, which is where Artifact Hub looks to confirm the listing belongs to this
+project. Without it the chart still lists; it just is not a verified publisher.
+
+The ordering is the part worth knowing: the ID does not exist until step 1, so
+the file cannot be filled in ahead of time, and `just chart-claim` refuses to
+push it empty. The owner name and email in that file are published to a public
+registry, and the email has to match the Artifact Hub account because that match
+is the ownership check.
 
 ## Version metadata
 

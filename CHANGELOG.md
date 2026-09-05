@@ -8,6 +8,32 @@ above them, because a commit subject cannot tell a consumer what to change.
 
 ## [Unreleased]
 
+### Changed
+
+#### Release archives are verified with a cosign bundle
+
+v0.1.0 published an image and a chart but **no archives and no signatures**: the
+signing step failed on the tag. cosign v3 deprecated the flags that produced a
+detached `.sig` and certificate, and now requires a bundle, so the release
+errored before it could upload anything.
+
+Verification is one file and one flag instead of two of each:
+
+```bash
+cosign verify-blob \
+  --bundle checksums.txt.bundle \
+  --certificate-identity-regexp '^https://github\.com/ethan-kane-ops/k8s-pod-oom-oracle/\.github/workflows/release\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+```
+
+The bundle carries the signature, the signing certificate and the transparency
+log entry together. Anything scripted against the old two-file form has to be
+updated, though nothing was ever published in that form.
+
+The image and chart signatures are unchanged, and the v0.1.0 image and chart
+remain signed and verifiable.
+
 ## [0.1.0] - 2026-09-05
 
 Nothing has been tagged yet, so everything below landed before any release. It is
