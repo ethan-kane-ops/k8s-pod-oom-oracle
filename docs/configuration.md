@@ -60,6 +60,21 @@ kill is listed newest first. The pod argument accepts a bare name or
 | `--limit` | all | Maximum reports to render, newest first |
 | `-o`, `--output` | `text` | `text` or `json` |
 
+## `oom-oracle watch`
+
+The live dashboard. Reads the same HTTP API as `inspect` and needs no privileges
+of its own. See [Dashboard](dashboard.md).
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--daemon` | `http://127.0.0.1:9090` | Base URL of the daemon to watch |
+| `--interval` | `2s` | How often to refresh. Floored at 500ms |
+
+The floor is not arbitrary. Each refresh is two requests against a daemon on a
+node that is, by the time anyone is watching this, probably under memory
+pressure, and the daemon samples once a second, so anything faster re-renders the
+same numbers.
+
 ## `oom-oracle version`
 
 Build metadata, as `text` or `json`.

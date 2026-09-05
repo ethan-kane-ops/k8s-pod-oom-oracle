@@ -71,6 +71,11 @@ field needs a nullable boolean, not a boolean.
 
 ### Added
 
+- **`oom-oracle watch`**, a live terminal dashboard. The left pane lists kills
+  newest first, the right renders the selected one through the same function
+  `inspect` prints, and the header states which detector is active because an
+  inferred victim and a traced one differ in one boolean and nothing else. It
+  reads the HTTP API and needs no privileges of its own.
 - `victimMatch` on the report: `hostPid`, `nsPid` or `none`, naming which
   identifier removed the victim from `processes`. A `none` alongside a known
   victim means the listing may still name the process the kernel killed. It also

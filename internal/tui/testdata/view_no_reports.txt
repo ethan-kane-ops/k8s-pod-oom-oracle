@@ -1,0 +1,32 @@
+oom-oracle  http://127.0.0.1:9090
+detector ebpf  node node-1  ready
+reports 0  tracking 48  unattributed 0
+╭────────────────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ no kills recorded                              ││ No OOM kills recorded.                                                                                             │
+│                                                ││                                                                                                                    │
+│                                                ││ The daemon is watching this node. This pane fills in when the kernel                                               │
+│                                                ││ kills a process in a container, which on a healthy node is never.                                                  │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+│                                                ││                                                                                                                    │
+╰────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ move  tab pane  r refresh  q quit  updated 2s ago
