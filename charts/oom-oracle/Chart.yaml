@@ -5,8 +5,8 @@ type: application
 # Kept in step with the git tag. The Release workflow refuses to publish when
 # this and the tag disagree, because a chart whose version is not the version it
 # installs is worse than no chart.
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.1.1
+appVersion: "0.1.1"
 home: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle
 sources:
   - https://github.com/ethan-kane-ops/k8s-pod-oom-oracle
@@ -30,7 +30,7 @@ annotations:
   # the two disagree with the git tag.
   artifacthub.io/images: |
     - name: oom-oracle
-      image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:0.1.0
+      image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:0.1.1
   # The agent needs host namespaces and two capabilities. Artifact Hub surfaces
   # this on the listing, which is the right place for someone to find out before
   # installing rather than after admission rejects it.

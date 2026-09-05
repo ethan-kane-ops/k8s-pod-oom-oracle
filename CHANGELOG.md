@@ -8,6 +8,8 @@ above them, because a commit subject cannot tell a consumer what to change.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-05
+
 ### Changed
 
 #### Release archives are verified with a cosign bundle
@@ -33,6 +35,10 @@ updated, though nothing was ever published in that form.
 
 The image and chart signatures are unchanged, and the v0.1.0 image and chart
 remain signed and verifiable.
+
+### Bug Fixes
+
+- *(release)* Sign with a cosign bundle and pin the cosign version (#39)
 
 ## [0.1.0] - 2026-09-05
 
