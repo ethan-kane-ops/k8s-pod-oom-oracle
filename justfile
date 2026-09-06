@@ -365,3 +365,43 @@ docs-serve:
 # Build the static docs site into ./site (--strict fails on a broken link)
 docs-build:
     uv run --with-requirements docs/requirements.txt mkdocs build --strict
+
+# Prepare the cluster for a demo recording (not itself recorded)
+#
+# Split from `cast` so the recording starts against a cluster that is already
+# up and rolled out. Doing this inside the take would put ninety seconds of
+# image builds at the front of a two-minute cast.
+[doc("Prepare the cluster for a demo recording")]
+cast-setup: build e2e-deploy
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ctx="kind-{{e2e_cluster}}"
+    # The workload manifest names alpine, which is not present inside the kind
+    # node. e2e-deploy preloads the same base under the e2e tag, so the take
+    # never waits on a registry pull it did not choose to show.
+    kubectl --context "$ctx" delete pod oom-gradual-leak --ignore-not-found --wait
+    detector=$(kubectl --context "$ctx" -n {{e2e_ns}} logs \
+      -l app.kubernetes.io/name=oom-oracle --tail=50 \
+      | sed -n 's/.*"detector":"\([a-z]*\)".*/\1/p' | tail -1)
+    if [ "$detector" != "ebpf" ]; then
+      echo "✗ daemon reports detector=$detector, want ebpf — the cast would show the fallback path" >&2
+      exit 1
+    fi
+    echo "✓ ready to record (detector=ebpf, no stale oom-gradual-leak)"
+
+# Record the demo cast that ships on the site
+#
+# --idle-time-limit trims the dead air while the leak climbs. It does not speed
+# the run up: the timestamps stay real, the gaps are just capped on playback.
+# The cast is not committed here. It ships in the site repo, next to the page
+# that embeds it, so the artefact lives with its consumer.
+[doc("Record the demo cast that ships on the site")]
+cast out="oom-oracle.cast":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f {{out}}
+    asciinema rec {{out}} \
+      --window-size 96x34 \
+      --idle-time-limit 2 \
+      --command hack/demo-cast.sh
+    echo "✓ recorded {{out}} — copy it to the site repo's public/casts/"
