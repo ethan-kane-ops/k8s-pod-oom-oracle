@@ -11,10 +11,20 @@
 # step in docs/releasing.md asking for a prior commit, which is the kind of
 # instruction that works until the one release nobody re-reads it for.
 #
-# Usage: hack/chart-version.sh <vX.Y.Z> [Chart.yaml]
+# --check runs the annotation guard alone and writes nothing, so `just release`
+# can fail on a stale changelog before git-cliff has rewritten CHANGELOG.md.
+# Failing after that left a dirty tree the operator had to unpick by hand.
+#
+# Usage: hack/chart-version.sh [--check] <vX.Y.Z> [Chart.yaml]
 set -euo pipefail
 
-version="${1:?usage: chart-version.sh <vX.Y.Z> [chart]}"
+check_only=false
+if [ "${1:-}" = "--check" ]; then
+  check_only=true
+  shift
+fi
+
+version="${1:?usage: chart-version.sh [--check] <vX.Y.Z> [chart]}"
 chart="${2:-charts/oom-oracle/Chart.yaml}"
 
 # Chart versions are SemVer with no leading v, unlike the git tag.
@@ -46,6 +56,11 @@ if ! grep -q "artifacthub.io/changes:" "$chart"; then
   echo "$chart has no artifacthub.io/changes annotation" >&2
   echo "the Artifact Hub listing would report no changelog for ${want}" >&2
   exit 1
+fi
+
+if [ "$check_only" = true ]; then
+  echo "▶ chart changelog describes ${want}"
+  exit 0
 fi
 
 # In place via a temp file rather than `sed -i`, whose syntax differs between

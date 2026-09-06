@@ -213,6 +213,11 @@ release bump="auto":
     esac
     case "$new_ver" in v*) ;; *) new_ver="v$new_ver" ;; esac
     if git rev-parse "$new_ver" >/dev/null 2>&1; then echo "✗ tag $new_ver already exists"; exit 1; fi
+    # Before `just check` and before git-cliff touches CHANGELOG.md. The
+    # artifacthub.io/changes annotation is the one release input that cannot be
+    # generated, so it is the one most likely to be forgotten, and failing on it
+    # after the changelog has been rewritten leaves a dirty tree to unpick.
+    ./hack/chart-version.sh --check "$new_ver"
     just check
     echo "▶ releasing $new_ver"
     # Merged into [Unreleased], not prepended above it. `-o` would regenerate
