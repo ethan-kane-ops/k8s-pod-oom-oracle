@@ -2,6 +2,7 @@ package hack
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -133,6 +134,41 @@ func TestChartVersion(t *testing.T) {
 	}
 }
 
+// TestChartVersionCheckOnly covers the mode `just release` calls before
+// git-cliff runs: it must reject a stale changelog and must not touch the file,
+// because the whole point is to fail while the tree is still clean.
+func TestChartVersionCheckOnly(t *testing.T) {
+	t.Run("passes without writing", func(t *testing.T) {
+		dir := t.TempDir()
+		before := chartFixture("0.2.3")
+		chart := write(t, dir, "Chart.yaml", before)
+
+		mustRun(t, "chart-version.sh", "--check", "v0.2.3", chart)
+
+		if got := read(t, chart); got != before {
+			t.Errorf("--check rewrote the chart\n%s", got)
+		}
+	})
+
+	t.Run("rejects a stale changes block", func(t *testing.T) {
+		dir := t.TempDir()
+		before := chartFixture("0.1.0")
+		chart := write(t, dir, "Chart.yaml", before)
+
+		_, stderr, err := run(t, "chart-version.sh", "--check", "v0.2.0", chart)
+
+		if err == nil {
+			t.Fatal("expected failure, got success")
+		}
+		if !strings.Contains(stderr, "points at a previous release") {
+			t.Errorf("stderr = %q", stderr)
+		}
+		if got := read(t, chart); got != before {
+			t.Errorf("a failing --check rewrote the chart")
+		}
+	})
+}
+
 // TestChartVersionAgainstTheRealChart guards the coupling between this script
 // and the file it edits: a reshuffled Chart.yaml that the awk no longer matches
 // would fail the release after the image had already been pushed.
@@ -160,10 +196,16 @@ func TestChartVersionAgainstTheRealChart(t *testing.T) {
 	}
 }
 
-// TestRealChartCarriesChangesForItsVersion is the check the release runs, made
-// unskippable: the committed chart must describe the version it is pinned to,
-// so `just release` never reaches the tag before someone notices.
-func TestRealChartCarriesChangesForItsVersion(t *testing.T) {
+// TestRealChartCarriesConsistentChanges checks what is true of the committed
+// chart at every point in the cycle. It cannot require the changes links to
+// match `version:`, because the annotation is written by hand *before* the
+// release and chart-version.sh only bumps `version:` during it, so the two
+// legitimately disagree while a release is being prepared.
+//
+// What must always hold: every link names one version, and that version is not
+// behind the released one. A link older than `version:` is a block nobody
+// rewrote, which is the failure this whole mechanism exists to catch.
+func TestRealChartCarriesConsistentChanges(t *testing.T) {
 	chart := read(t, "../charts/oom-oracle/Chart.yaml")
 
 	version := chartVersion.FindStringSubmatch(chart)
@@ -175,10 +217,34 @@ func TestRealChartCarriesChangesForItsVersion(t *testing.T) {
 	if len(tags) == 0 {
 		t.Fatal("the real Chart.yaml has no artifacthub.io/changes release links")
 	}
-	want := "releases/tag/v" + version[1]
-	for _, tag := range tags {
-		if tag != want {
-			t.Errorf("changes link %q, want %q: Artifact Hub would show the wrong release's notes", tag, want)
+	for _, tag := range tags[1:] {
+		if tag != tags[0] {
+			t.Fatalf("changes links name two versions, %q and %q: one entry was rewritten and another was not", tags[0], tag)
 		}
 	}
+
+	linked := strings.TrimPrefix(tags[0], "releases/tag/v")
+	if semver(t, linked) < semver(t, version[1]) {
+		t.Errorf("changes describe v%s but the chart is already at %s: Artifact Hub is showing notes for a release that has shipped", linked, version[1])
+	}
+}
+
+// semver packs a three-part version into one comparable integer. Each part is
+// given four digits, which is more room than this project will ever need and
+// avoids the string comparison that puts 0.1.10 before 0.1.9.
+func semver(t *testing.T, v string) int {
+	t.Helper()
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a version: %q", v)
+	}
+	n := 0
+	for _, part := range parts {
+		d, err := strconv.Atoi(part)
+		if err != nil {
+			t.Fatalf("not a version: %q", v)
+		}
+		n = n*10000 + d
+	}
+	return n
 }

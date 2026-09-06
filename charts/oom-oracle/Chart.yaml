@@ -43,16 +43,16 @@ annotations:
   # which is also what hack/chart-version.sh checks: a block still pointing at
   # the previous tag fails the bump rather than publishing stale notes.
   artifacthub.io/changes: |
-    - kind: fixed
-      description: Release archives and their cosign signatures are published again; v0.1.0 shipped the image and chart but neither of those
+    - kind: added
+      description: A values schema. A mistyped or out-of-range value now fails at install time instead of being ignored, which previously left the default rendered and nothing saying so
       links:
         - name: Release notes
-          url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/v0.1.1
-    - kind: changed
-      description: Signatures are verified from a single cosign bundle instead of a detached .sig and certificate
+          url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/v0.1.2
+    - kind: added
+      description: kubeVersion is declared as >=1.19.0-0, the release that made the pod securityContext seccompProfile the DaemonSet renders generally available
       links:
         - name: Release notes
-          url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/v0.1.1
+          url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/v0.1.2
   artifacthub.io/links: |
     - name: source
       url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle
