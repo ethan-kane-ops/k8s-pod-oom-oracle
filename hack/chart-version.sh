@@ -24,6 +24,30 @@ case "$want" in
   *) echo "not a version: $version" >&2; exit 1 ;;
 esac
 
+# Artifact Hub renders artifacthub.io/changes as the listing's release notes, and
+# nothing downstream can tell that they describe the previous release: the chart
+# version is correct, the image tag is correct, and the notes are a version out.
+# Every entry links to the release it describes, so requiring those links to name
+# this tag is a mechanical check on prose that is otherwise unverifiable.
+#
+# Run before anything is rewritten, so a stale block aborts `just release` with
+# the working tree untouched and no tag pushed.
+stale=$(grep -oE 'releases/tag/v[0-9]+\.[0-9]+\.[0-9]+' "$chart" | grep -v "releases/tag/v${want}$" || true)
+if [ -n "$stale" ]; then
+  echo "artifacthub.io/changes still points at a previous release:" >&2
+  printf '  %s\n' $stale >&2
+  echo "" >&2
+  echo "Artifact Hub would publish ${want}'s listing with the previous release's" >&2
+  echo "notes. Rewrite the annotation in $chart to describe ${want}, linking to:" >&2
+  echo "  https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/v${want}" >&2
+  exit 1
+fi
+if ! grep -q "artifacthub.io/changes:" "$chart"; then
+  echo "$chart has no artifacthub.io/changes annotation" >&2
+  echo "the Artifact Hub listing would report no changelog for ${want}" >&2
+  exit 1
+fi
+
 # In place via a temp file rather than `sed -i`, whose syntax differs between
 # BSD and GNU. This has to run on a maintainer's Mac and on a runner.
 tmp=$(mktemp)

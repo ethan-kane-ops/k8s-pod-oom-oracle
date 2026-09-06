@@ -3,7 +3,8 @@
 [![CI](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/actions/workflows/ci.yml/badge.svg)](https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-mkdocs--material-0a9edc.svg)](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ethan-kane-ops/k8s-pod-oom-oracle)](https://goreportcard.com/report/github.com/ethan-kane-ops/k8s-pod-oom-oracle)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/oom-oracle)](https://artifacthub.io/packages/search?repo=oom-oracle)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ethan-kane-ops/k8s-pod-oom-oracle/badge)](https://scorecard.dev/viewer/?uri=github.com/ethan-kane-ops/k8s-pod-oom-oracle)
 [![eBPF Powered](https://img.shields.io/badge/eBPF-Kernel--level-red.svg)](https://ebpf.io)
 
 A node agent that explains Kubernetes OOM kills at the level the control plane
@@ -67,16 +68,6 @@ PROCESSES IN CONTAINER AFTER THE KILL:
 
 ## Quickstart
 
-> **Status.** No version has been tagged yet, so nothing is published to
-> `ghcr.io` and the Helm command below has nothing to pull. Until the first
-> release, build the image and load it into your cluster.
-
-### On kind, end to end
-
-```bash
-just e2e-deploy   # create the cluster, build the image, load it, roll out the DaemonSet
-```
-
 ### With Helm
 
 ```bash
@@ -85,17 +76,39 @@ helm install oom-oracle oci://ghcr.io/ethan-kane-ops/charts/oom-oracle \
 kubectl label namespace oom-oracle pod-security.kubernetes.io/enforce=privileged
 ```
 
-### On any cluster
+The chart is on [Artifact Hub](https://artifacthub.io/packages/helm/oom-oracle/oom-oracle).
+It and the image it installs are signed with cosign in keyless mode; `SECURITY.md`
+has the verification commands.
+
+The `privileged` Pod Security label is not optional. `hostPID`, `hostPath`
+volumes and non-default capabilities are each outside `baseline`, so without it
+admission rejects the pods and the DaemonSet reports no event explaining why.
+
+### On kind, end to end
 
 ```bash
-# 1. Build and push the image to a registry your nodes can reach
+just e2e-deploy   # create the cluster, build the image, load it, roll out the DaemonSet
+```
+
+### Without Helm
+
+`deploy/` is the same DaemonSet the chart renders, against
+`ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:latest`. Pin a tag or a digest before
+using it on anything you care about: `latest` moves on every release, and this
+is a privileged node agent.
+
+```bash
+kubectl apply -f deploy/
+kubectl -n oom-oracle rollout status daemonset/oom-oracle
+```
+
+To run your own build instead, push it somewhere the nodes can reach and point
+the DaemonSet at it:
+
+```bash
 docker build -t <your-registry>/oom-oracle:dev .
 docker push <your-registry>/oom-oracle:dev
-
-# 2. Point the DaemonSet at it and apply
-kubectl apply -f deploy/
 kubectl -n oom-oracle set image daemonset/oom-oracle oom-oracle=<your-registry>/oom-oracle:dev
-kubectl -n oom-oracle rollout status daemonset/oom-oracle
 ```
 
 ### Read the reports
@@ -134,16 +147,17 @@ in [`examples/workloads/`](examples/workloads/).
 
 ## Project status
 
-Pre-release. No version has been tagged, so `main` is the only thing to run and
-the HTTP API and report JSON may still change shape.
+Released and installable. `v0.1.1` publishes signed CLI archives, a multi-arch
+image on `ghcr.io`, and a Helm chart listed on Artifact Hub.
+
+Pre-1.0, so the HTTP API and report JSON can still change shape. Breaking
+changes are written by hand in [CHANGELOG.md](./CHANGELOG.md) with the migration
+each one needs, because a commit subject cannot tell you which JSON field to
+rename.
 
 Working today: both detectors, cgroup v1 and v2 sampling, pod-name correlation,
 the HTTP API, the text and JSON renderers, the terminal dashboard, and an e2e
 suite that runs on kind in CI.
-
-The release pipeline and the Helm chart are in place, but no tag has been cut,
-so there is nothing published to install yet. Cutting the first release is the
-remaining step.
 
 [ROADMAP.md](./ROADMAP.md) has the full picture, including the known limitations
 worth reading before you deploy this on anything you care about.

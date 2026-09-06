@@ -6,10 +6,11 @@ The daemon serves HTTP on `--listen`, `:9090` by default.
     There is no authentication. It is intended to be reachable from the node it
     runs on, not from the cluster network. See [Security](../security.md).
 
-!!! note "Pre-release"
-    No version has been tagged. The routes and the report JSON may still change
-    shape, and have: the report's process listing was named `hogs` before it
-    became `processes`.
+!!! note "Pre-1.0"
+    The routes and the report JSON can still change shape, and have: the
+    report's process listing was named `hogs` before it became `processes`.
+    Every break is written up with its migration in the
+    [changelog](../changelog.md).
 
 ## Routes
 

@@ -7,6 +7,9 @@ type: application
 # installs is worse than no chart.
 version: 0.1.1
 appVersion: "0.1.1"
+# securityContext.seccompProfile went GA in 1.19 and the DaemonSet renders it
+# unconditionally, so anything older installs a pod the API server rejects.
+kubeVersion: ">=1.19.0-0"
 home: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle
 sources:
   - https://github.com/ethan-kane-ops/k8s-pod-oom-oracle
@@ -35,6 +38,21 @@ annotations:
   # this on the listing, which is the right place for someone to find out before
   # installing rather than after admission rejects it.
   artifacthub.io/containsSecurityUpdates: "false"
+  # Artifact Hub renders these as the release notes on the listing, and reports
+  # "no changelog" without them. Every entry links to the release it describes,
+  # which is also what hack/chart-version.sh checks: a block still pointing at
+  # the previous tag fails the bump rather than publishing stale notes.
+  artifacthub.io/changes: |
+    - kind: fixed
+      description: Release archives and their cosign signatures are published again; v0.1.0 shipped the image and chart but neither of those
+      links:
+        - name: Release notes
+          url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/v0.1.1
+    - kind: changed
+      description: Signatures are verified from a single cosign bundle instead of a detached .sig and certificate
+      links:
+        - name: Release notes
+          url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/v0.1.1
   artifacthub.io/links: |
     - name: source
       url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle

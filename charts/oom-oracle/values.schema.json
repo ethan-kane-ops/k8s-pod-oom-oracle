@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "oom-oracle values",
+  "description": "A typo in a value is silent: the key is ignored, the default is rendered, and the DaemonSet installs cleanly. This schema turns that into a failure at `helm install` instead.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "description": "Injected by Helm for subcharts. Unused here, but rejecting it would break `--set global.*` on a parent chart.",
+      "type": "object"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "description": "Empty defaults to .Chart.AppVersion.",
+          "type": "string"
+        },
+        "digest": {
+          "description": "Overrides repository and tag entirely. Must include the algorithm prefix.",
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" }
+        },
+        "required": ["name"]
+      }
+    },
+    "nameOverride": { "type": "string", "maxLength": 63 },
+    "fullnameOverride": { "type": "string", "maxLength": 63 },
+    "daemon": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "detector": {
+          "description": "ebpf never falls back and fails to start when the kernel refuses, which is what you want if inferred victims are not acceptable.",
+          "type": "string",
+          "enum": ["auto", "poller", "ebpf"]
+        },
+        "pollInterval": {
+          "description": "Go duration. Ignored under the eBPF detector, which is event-driven.",
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)$"
+        },
+        "sampleInterval": {
+          "description": "Go duration. With history, sets how much trajectory exists when a kill lands.",
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)$"
+        },
+        "history": {
+          "description": "Samples retained per container. 60 at 1s is the minute the trajectory chart draws.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "retain": {
+          "description": "Reports held in memory per node. There is no persistence.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "cgroupPrefix": {
+          "description": "Absolute path. \"/\" watches the whole hierarchy.",
+          "type": "string",
+          "pattern": "^/"
+        },
+        "includeNonKubernetes": { "type": "boolean" },
+        "kubernetes": {
+          "description": "off yields UID-only reports. auto degrades to that with a logged reason. on refuses to start rather than degrade.",
+          "type": "string",
+          "enum": ["auto", "on", "off"]
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"]
+        },
+        "logFormat": {
+          "type": "string",
+          "enum": ["text", "json"]
+        },
+        "listen": {
+          "description": "host:port, bound inside the pod. Changing the port here without changing service.port leaves the probes pointing at nothing.",
+          "type": "string",
+          "pattern": "^.*:[0-9]{1,5}$"
+        },
+        "extraArgs": {
+          "description": "Appended verbatim. hack/verify-chart-flags.sh does not check these, so a flag the daemon has never heard of crash-loops on every node.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": {
+          "description": "Must agree with the port in daemon.listen.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "annotations": { "type": "object" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "rbac": {
+      "description": "One rule: get, list and watch on pods. Disabling it yields UID-only reports unless something else grants them.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": { "type": "object" }
+      }
+    },
+    "tolerations": {
+      "description": "An untolerated taint is a node with no OOM reporting and nothing saying so.",
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "nodeSelector": { "type": "object" },
+    "affinity": { "type": "object" },
+    "priorityClassName": {
+      "description": "system-node-critical keeps the agent from being evicted at the moment it exists for.",
+      "type": "string"
+    },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "updateStrategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["RollingUpdate", "OnDelete"]
+        },
+        "rollingUpdate": { "type": "object" }
+      }
+    },
+    "livenessProbe": {
+      "type": "object",
+      "properties": {
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "successThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "readinessProbe": {
+      "description": "/readyz means the probe is attached and the sampler holds history, not merely that the process started.",
+      "type": "object",
+      "properties": {
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "successThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "hostPaths": {
+      "description": "Both are mounted read-only. The daemon never writes to the node.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cgroup": { "type": "string", "pattern": "^/" },
+        "proc": { "type": "string", "pattern": "^/" }
+      }
+    }
+  }
+}
