@@ -6,8 +6,12 @@ they should. Work is tracked on the
 
 ## Where this is today
 
-Pre-release. No version has been tagged, so `main` is the only thing to run and
-the HTTP API and report JSON may still change shape.
+Released and installable. `v0.1.1` publishes signed CLI archives, a multi-arch
+image, and a Helm chart listed on
+[Artifact Hub](https://artifacthub.io/packages/helm/oom-oracle/oom-oracle).
+Still pre-1.0, so the HTTP API and report JSON can change shape; every break is
+written up with its migration in
+[CHANGELOG.md](./CHANGELOG.md).
 
 What works end to end, verified on a real kernel rather than fixtures:
 
@@ -24,17 +28,20 @@ What works end to end, verified on a real kernel rather than fixtures:
   the limit it was measured against.
 - **Delivery** through an HTTP API and a terminal renderer.
 
-## Next: reaching a first release
+## Next: reaching 1.0
 
-1. **Cut the first tag.** The pipeline and the chart are in place; nothing has
-   been released, so there is nothing published to install.
-2. **List the chart on Artifact Hub**, which needs a public repository first.
+1. **Settle the report schema.** `/v1/events` is what anything downstream builds
+   on, and it has already broken once. 1.0 means it stops moving without a
+   deprecation window.
+2. **Prove the poller's victim attribution**, or say plainly that it is a guess.
+   An inferred victim and a traced one differ by one boolean today, and the
+   fallback is what runs on every node without BTF.
 
-Shipped since this list was written: runnable
-[example workloads](./examples/), a
+Shipped: runnable [example workloads](./examples/), a
 [documentation site](https://ethan-kane-ops.github.io/k8s-pod-oom-oracle/), the
 `oom-oracle watch` terminal dashboard, a release pipeline producing multi-arch
-images and CLI archives, cosign-signed with an SBOM, and a Helm chart.
+images and CLI archives, cosign-signed with an SBOM, and a Helm chart published
+to `oci://ghcr.io/ethan-kane-ops/charts/oom-oracle` and listed on Artifact Hub.
 
 ## Known limitations, and what would fix them
 

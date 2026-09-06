@@ -1,12 +1,20 @@
 package hack
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
 
-// The three places Chart.yaml states a version, in the shape the real file uses.
-const chartFixture = `apiVersion: v2
+var (
+	releaseTag   = regexp.MustCompile(`releases/tag/v\d+\.\d+\.\d+`)
+	chartVersion = regexp.MustCompile(`(?m)^version: (\d+\.\d+\.\d+)$`)
+)
+
+// The three places Chart.yaml states a version, in the shape the real file
+// uses, plus the artifacthub.io/changes block whose release links pin the
+// listing's notes to one tag.
+const chartTemplate = `apiVersion: v2
 name: oom-oracle
 description: Node agent that explains Kubernetes OOM kills
 type: application
@@ -18,7 +26,21 @@ annotations:
   artifacthub.io/images: |
     - name: oom-oracle
       image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:0.1.0
+  artifacthub.io/changes: |
+    - kind: fixed
+      description: Something a commit subject could not have said
+      links:
+        - name: Release notes
+          url: https://github.com/ethan-kane-ops/k8s-pod-oom-oracle/releases/tag/vLINKED
 `
+
+// chartFixture is the template with its changes block already describing
+// version, which is what a maintainer writes by hand before cutting a release.
+// The script deliberately does not rewrite these links: it only checks them,
+// because prose about a release cannot be generated from its number.
+func chartFixture(version string) string {
+	return strings.ReplaceAll(chartTemplate, "vLINKED", "v"+strings.TrimPrefix(version, "v"))
+}
 
 func TestChartVersion(t *testing.T) {
 	tests := []struct {
@@ -30,7 +52,7 @@ func TestChartVersion(t *testing.T) {
 	}{
 		{
 			name:    "sets all three versions",
-			chart:   chartFixture,
+			chart:   chartFixture("0.2.3"),
 			version: "v0.2.3",
 			want: []string{
 				"version: 0.2.3",
@@ -40,21 +62,37 @@ func TestChartVersion(t *testing.T) {
 		},
 		{
 			name:    "a v prefix is optional",
-			chart:   chartFixture,
+			chart:   chartFixture("1.0.0"),
 			version: "1.0.0",
 			want:    []string{"version: 1.0.0", `appVersion: "1.0.0"`},
 		},
 		{
 			name:    "a chart missing the images annotation is an error",
-			chart:   "apiVersion: v2\nversion: 0.1.0\nappVersion: \"0.1.0\"\n",
+			chart:   strings.ReplaceAll(chartFixture("0.2.0"), "  artifacthub.io/images: |\n    - name: oom-oracle\n      image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:0.1.0\n", ""),
 			version: "v0.2.0",
 			wantErr: "did not set",
 		},
 		{
 			name:    "a non-version is rejected",
-			chart:   chartFixture,
+			chart:   chartFixture("0.1.0"),
 			version: "latest",
 			wantErr: "not a version",
+		},
+		{
+			// Artifact Hub would publish the new version's listing with the
+			// previous version's release notes, and every other check in the
+			// pipeline would pass: the chart version, appVersion and image tag
+			// are all correct. Only the prose is a release behind.
+			name:    "a changes block still linking the previous release is an error",
+			chart:   chartFixture("0.1.0"),
+			version: "v0.2.0",
+			wantErr: "points at a previous release",
+		},
+		{
+			name:    "a chart with no changes annotation is an error",
+			chart:   "apiVersion: v2\nversion: 0.1.0\nappVersion: \"0.1.0\"\n",
+			version: "v0.2.0",
+			wantErr: "no artifacthub.io/changes",
 		},
 	}
 
@@ -100,7 +138,13 @@ func TestChartVersion(t *testing.T) {
 // would fail the release after the image had already been pushed.
 func TestChartVersionAgainstTheRealChart(t *testing.T) {
 	dir := t.TempDir()
-	chart := write(t, dir, "Chart.yaml", read(t, "../charts/oom-oracle/Chart.yaml"))
+	committed := read(t, "../charts/oom-oracle/Chart.yaml")
+
+	// The changes block is hand-written per release, so stamp it to the target
+	// here. Leaving it stale would test the staleness guard, which has its own
+	// case above, instead of the awk rewriting this test exists for.
+	stamped := releaseTag.ReplaceAllString(committed, "releases/tag/v9.8.7")
+	chart := write(t, dir, "Chart.yaml", stamped)
 
 	mustRun(t, "chart-version.sh", "v9.8.7", chart)
 
@@ -112,6 +156,29 @@ func TestChartVersionAgainstTheRealChart(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q after rewriting the real chart\n%s", want, got)
+		}
+	}
+}
+
+// TestRealChartCarriesChangesForItsVersion is the check the release runs, made
+// unskippable: the committed chart must describe the version it is pinned to,
+// so `just release` never reaches the tag before someone notices.
+func TestRealChartCarriesChangesForItsVersion(t *testing.T) {
+	chart := read(t, "../charts/oom-oracle/Chart.yaml")
+
+	version := chartVersion.FindStringSubmatch(chart)
+	if version == nil {
+		t.Fatal("the real Chart.yaml has no version")
+	}
+
+	tags := releaseTag.FindAllString(chart, -1)
+	if len(tags) == 0 {
+		t.Fatal("the real Chart.yaml has no artifacthub.io/changes release links")
+	}
+	want := "releases/tag/v" + version[1]
+	for _, tag := range tags {
+		if tag != want {
+			t.Errorf("changes link %q, want %q: Artifact Hub would show the wrong release's notes", tag, want)
 		}
 	}
 }
