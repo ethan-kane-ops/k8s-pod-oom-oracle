@@ -8,6 +8,16 @@ above them, because a commit subject cannot tell a consumer what to change.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-06
+
+### Features
+
+- *(helm)* Add a values schema and finish the Artifact Hub listing (#40)
+
+### Bug Fixes
+
+- *(release)* Check the chart changelog before writing anything (#41)
+
 ## [0.1.1] - 2026-09-05
 
 ### Changed

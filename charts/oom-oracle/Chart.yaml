@@ -5,8 +5,8 @@ type: application
 # Kept in step with the git tag. The Release workflow refuses to publish when
 # this and the tag disagree, because a chart whose version is not the version it
 # installs is worse than no chart.
-version: 0.1.1
-appVersion: "0.1.1"
+version: 0.1.2
+appVersion: "0.1.2"
 # securityContext.seccompProfile went GA in 1.19 and the DaemonSet renders it
 # unconditionally, so anything older installs a pod the API server rejects.
 kubeVersion: ">=1.19.0-0"
@@ -33,7 +33,7 @@ annotations:
   # the two disagree with the git tag.
   artifacthub.io/images: |
     - name: oom-oracle
-      image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:0.1.1
+      image: ghcr.io/ethan-kane-ops/k8s-pod-oom-oracle:0.1.2
   # The agent needs host namespaces and two capabilities. Artifact Hub surfaces
   # this on the listing, which is the right place for someone to find out before
   # installing rather than after admission rejects it.
