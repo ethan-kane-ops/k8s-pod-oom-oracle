@@ -49,6 +49,7 @@ docker-build:
 #
 # Runs in a container because macOS clang has no BPF backend. The generated .o
 # and .go files are committed, so this is only needed after editing the C.
+[doc("Regenerate the eBPF objects in internal/detector/bpf (in a container)")]
 bpf-generate:
     docker build -q -t oom-oracle-bpf:local -f build/bpf/Dockerfile build/bpf
     docker run --rm -u "$(id -u):$(id -g)" \
@@ -144,6 +145,7 @@ e2e-logs:
 # The e2e tag is the same blind spot one level up. Without it the whole of
 # test/e2e is invisible to every linter here, which is how a dead helper sat
 # there unnoticed.
+[doc("Run linters for linux and darwin, including build-tagged code")]
 lint:
     GOOS=linux go vet -tags e2e ./...
     GOOS=darwin go vet ./...
@@ -155,6 +157,7 @@ lint:
 # go test -fuzz takes exactly one target per run, so this enumerates them
 # rather than relying on a pattern. Every target runs even after one fails,
 # because finding two crashers in a run is more useful than finding the first.
+[doc("Fuzz every parser target for the given budget each (default 60s)")]
 fuzz time="60s":
     #!/usr/bin/env bash
     set -uo pipefail
@@ -176,6 +179,7 @@ tidy:
 
 # Tidy + lint + test. Uses the race detector so the local gate matches CI:
 # concurrency bugs in this codebase are the ones that fail on a node, not a laptop.
+[doc("Tidy + lint + race-detector tests, the same gate as CI")]
 check: tidy lint test-race
 
 # Remove build artifacts
