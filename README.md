@@ -147,7 +147,7 @@ in [`examples/workloads/`](examples/workloads/).
 
 ## Project status
 
-Released and installable. `v0.1.1` publishes signed CLI archives, a multi-arch
+Released and installable. Each release publishes signed CLI archives, a multi-arch
 image on `ghcr.io`, and a Helm chart listed on Artifact Hub.
 
 Pre-1.0, so the HTTP API and report JSON can still change shape. Breaking

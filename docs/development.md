@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-* Go 1.26.5 (pinned in `.mise.toml`)
+* Go, at the version pinned in `.mise.toml`
 * [mise](https://mise.jdx.dev/) for runtimes, [just](https://just.systems/) for tasks
 * Docker, for the e2e suite and for regenerating the eBPF objects
 * A Linux kernel ≥ 5.8 with BTF, to run the eBPF detector. macOS builds and
