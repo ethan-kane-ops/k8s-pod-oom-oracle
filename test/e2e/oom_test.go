@@ -503,13 +503,22 @@ func assertVictimFiltered(t *testing.T, found report) {
 	switch found.VictimMatch {
 	case "hostPid", "nsPid":
 		t.Logf("victim filtered by %s", found.VictimMatch)
+	case "exited":
+		// The listing is read after the kill, and the victim had already left
+		// the cgroup. The loop below still fails if it is listed.
+		t.Logf("victim exited before the listing was read")
+	case "":
+		// No listing was read at all: the cgroup was gone by report time.
+		if len(found.Processes) != 0 {
+			t.Errorf("victimMatch is empty but %d processes are listed", len(found.Processes))
+		}
 	case "none":
 		t.Errorf("victimMatch = none: neither the host pid (%d) nor the container "+
 			"pid (%d) matched any of the %d listed processes, so the listing names "+
 			"a process the kernel killed",
 			found.Victim.PID, found.Victim.NSPid, len(found.Processes))
 	default:
-		t.Errorf("victimMatch = %q, want hostPid, nsPid or none", found.VictimMatch)
+		t.Errorf("victimMatch = %q, want hostPid, nsPid, exited or none", found.VictimMatch)
 	}
 
 	for _, proc := range found.Processes {

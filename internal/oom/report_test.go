@@ -112,7 +112,7 @@ func TestProcessesFrom(t *testing.T) {
 			procs:     nil,
 			victim:    detector.Victim{PID: 200, NSPid: 17},
 			wantPIDs:  []int{},
-			wantMatch: VictimMatchNone,
+			wantMatch: VictimMatchExited,
 		},
 		{
 			// A victim still visible in /proc while it dies must not be listed
@@ -141,9 +141,20 @@ func TestProcessesFrom(t *testing.T) {
 			wantMatch: VictimMatchHostPID,
 		},
 		{
-			name:      "an absent victim removes nothing",
+			// The listing is read after the kill, so a victim that has already
+			// left the cgroup is absent rather than unmatched.
+			name:      "an absent victim removes nothing and is recorded as exited",
 			procs:     procs,
 			victim:    detector.Victim{PID: 999, NSPid: 998},
+			wantPIDs:  []int{100, 200, 300},
+			wantMatch: VictimMatchExited,
+		},
+		{
+			// Without an NSPid a missing host PID proves nothing: under a nested
+			// runtime the victim can be listed under a different number.
+			name:      "a missing host pid with no nspid is not exited",
+			procs:     procs,
+			victim:    detector.Victim{PID: 1397320},
 			wantPIDs:  []int{100, 200, 300},
 			wantMatch: VictimMatchNone,
 		},

@@ -406,12 +406,19 @@ func TestHandleRecordsVictimMatch(t *testing.T) {
 			want:   oom.VictimMatchNSPid,
 		},
 		{
-			// Neither identifier found it, so the listing still names a dead
+			// Neither identifier found it, so the listing may still name a dead
 			// process. Nothing else in the report says so.
 			name:         "a known victim that matches nothing warns",
-			victim:       detector.Victim{PID: 1397320, NSPid: 999, Known: true},
+			victim:       detector.Victim{PID: 1397320, Known: true},
 			want:         oom.VictimMatchNone,
 			wantWarnings: 1,
+		},
+		{
+			// The victim left the cgroup before the listing was read, so the
+			// listing cannot name it and there is nothing to warn about.
+			name:   "a victim absent from the listing is recorded as exited",
+			victim: detector.Victim{PID: 1397320, NSPid: 999, Known: true},
+			want:   oom.VictimMatchExited,
 		},
 		{
 			// No victim was identified at all, so there is nothing to filter and
