@@ -160,7 +160,7 @@ interpret those as markup.
 | `trajectory` | array | Memory history leading up to the kill, oldest first |
 | `processes` | array | The container's process list at report time, heaviest first, victim removed |
 | `groupKill` | bool or null | Whether the cgroup is killed as an indivisible unit. `null` when it could not be read |
-| `victimMatch` | string | Which identifier removed the victim from `processes`: `hostPid`, `nsPid` or `none` |
+| `victimMatch` | string | Which identifier removed the victim from `processes`: `hostPid`, `nsPid`, `exited` or `none` |
 | `trend` | object | Growth analysis over the trajectory |
 
 ### `identity`
@@ -260,6 +260,7 @@ Which identifier removed the victim from `processes`.
 |---|---|
 | `hostPid` | The host-namespace PID matched. The daemon and the kernel number processes the same way |
 | `nsPid` | Only the container-namespace PID matched. They do not, which is normal under a nested runtime such as kind |
+| `exited` | Neither PID appears in the listing. The victim left the cgroup before the listing was read, so there was nothing to remove |
 | `none` | Neither matched |
 
 `none` is expected when `victim.known` is false: there was no victim to remove.

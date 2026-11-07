@@ -77,9 +77,11 @@ type Report struct {
 	// VictimMatch records which identifier removed the victim from Processes.
 	//
 	// "none" with a known victim means the filter did not fire and the listing
-	// still names a dead process. "nsPid" means the daemon and the kernel do not
-	// share a PID namespace, which is normal under a nested runtime and worth
-	// knowing when the numbers in a report look unrelated to each other.
+	// may still name a dead process. "exited" means the victim had already
+	// left the cgroup, so the listing cannot name it. "nsPid" means the daemon
+	// and the kernel do not share a PID namespace, which is normal under a
+	// nested runtime and worth knowing when the numbers in a report look
+	// unrelated to each other.
 	VictimMatch VictimMatch `json:"victimMatch"`
 	// GroupKill records memory.oom.group on the cgroup this report is attributed
 	// to. True means the kernel killed the whole cgroup rather than the single
@@ -146,6 +148,12 @@ const (
 	// daemon is reading a different PID namespace from the one the kernel
 	// reported the kill in.
 	VictimMatchNSPid VictimMatch = "nsPid"
+	// VictimMatchExited means neither identifier appears anywhere in the
+	// listing: the victim had already left the cgroup when it was read, so
+	// there was nothing to remove. Only a known NSPid can establish this. Host
+	// PIDs differ under a nested runtime, so a missing host PID alone proves
+	// nothing.
+	VictimMatchExited VictimMatch = "exited"
 )
 
 // ProcessesFrom converts a container's process list into report entries,
@@ -184,7 +192,25 @@ func ProcessesFrom(procs []procfs.Process, victim detector.Victim) ([]ProcessSna
 			RSSBytes: proc.RSSBytes,
 		})
 	}
+	if match == VictimMatchNone && victimAbsent(procs, victim) {
+		match = VictimMatchExited
+	}
 	return snapshot, match
+}
+
+// victimAbsent reports whether no listed process carries either of the
+// victim's PIDs. It is checked apart from victimMatch so that a broken matcher
+// still reads as "none" whenever the victim is listed.
+func victimAbsent(procs []procfs.Process, victim detector.Victim) bool {
+	if victim.NSPid == 0 {
+		return false
+	}
+	for _, proc := range procs {
+		if proc.NSPid == victim.NSPid || (victim.PID != 0 && proc.PID == victim.PID) {
+			return false
+		}
+	}
+	return true
 }
 
 // victimMatch reports which identifier, if any, marks a listed process as the
