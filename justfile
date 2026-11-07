@@ -339,6 +339,9 @@ chart-e2e: e2e-deploy
       --set image.tag=e2e \
       --set image.pullPolicy=Never \
       --wait --timeout 3m
+    # helm --wait can pass before the DaemonSet controller has created the pod,
+    # and the pod proxy rejects a pod with no IP yet ("address not allowed").
+    kubectl --context "$ctx" -n "$ns" rollout status daemonset/chart-test-{{binary}} --timeout=180s
     # The chart rendering is not the thing under test; a daemon that starts and
     # attaches is. A wrong flag installs cleanly and crash-loops, and a lost
     # capability starts fine and silently infers victims instead of tracing them.
