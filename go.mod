@@ -20,6 +20,7 @@ require (
 	github.com/cilium/ebpf v0.22.0
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2
+	go.uber.org/goleak v1.3.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
 	k8s.io/api v0.37.2
