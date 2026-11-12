@@ -1,5 +1,5 @@
 [tools]
-go = "1.26.10"
+go = "1.26.11"
 # Pinned, and pinned to the same version as .github/workflows/ci.yml. With
 # "latest" here the local gate and CI run different linters, so each can pass
 # while the other fails. Bump both together or not at all.
